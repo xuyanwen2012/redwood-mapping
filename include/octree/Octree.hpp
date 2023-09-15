@@ -4,6 +4,12 @@
 #include "../brt/RadixTree.hpp"
 #include "Node.hpp"
 
+void oct::OctNode::SetChild(const int child, const int my_child_idx) {
+  children[my_child_idx] = child;
+  child_node_mask |= (1 << my_child_idx);
+  //   atomicOr(&child_node_mask, 1 << my_child_idx);
+}
+
 inline void MakeNodesHelper(const int i, oct::OctNode* nodes,
                             const int* node_offsets, const int* edge_count,
                             const Code_t* morton_keys,

@@ -35,7 +35,7 @@ static void BM_ProcessInternalNode(bm::State& state) {
       brt::ProcessInternalNodesHelper(input_size, u_sorted_morton_keys.data(),
                                       i, brt_nodes.data());
     }
-    bm::ClobberMemory();
+    bm::DoNotOptimize(brt_nodes.size());
   }
 }
 
