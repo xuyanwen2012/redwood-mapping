@@ -5,6 +5,7 @@
 #include <intrin.h>
 #elif defined(__CUDACC__)
 #include <cuda_runtime.h>
+#elif defined(__GNUC__) || defined(__clang__)
 #else
 #error Unsupported compiler or platform
 #endif
