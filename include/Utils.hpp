@@ -29,8 +29,8 @@ void TimeTask(const std::string& task_name, Func&& f) {
 
   const auto t1 = std::chrono::high_resolution_clock::now();
   const auto time_span =
-      std::chrono::duration_cast<std::chrono::duration<float>>(t1 - t0);
+      std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
 
   std::cout << "Finished " << task_name << "! Time took: " << time_span.count()
-            << "s. " << std::endl;
+            << "ms. " << std::endl;
 }

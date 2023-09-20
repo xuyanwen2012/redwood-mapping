@@ -108,7 +108,6 @@ int main() {
                         u_edge_count.data(), u_sorted_morton_keys.data(),
                         u_brt_nodes.data(), min_coord, range, root_level);
                   });
-    // }
   });
 
   return 0;

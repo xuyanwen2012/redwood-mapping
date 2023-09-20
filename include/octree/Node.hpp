@@ -17,6 +17,7 @@ struct OctNode {
 
   // TODO: This is overkill number of pointers
   int children[8];
+  // int* children_array;
 
   /**
    * @brief For bit position i (from the right): If 1, children[i] is the index

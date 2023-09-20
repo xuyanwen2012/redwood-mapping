@@ -13,6 +13,9 @@
 #include "octree/EdgeCount.hpp"
 #include "octree/Octree.hpp"
 
+// #define policy_t std::execution::seq
+#define policy_t std::execution::par
+
 int main() {
   thread_local std::mt19937 gen(114514);  // NOLINT(cert-msc51-cpp)
   static std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
@@ -49,7 +52,7 @@ int main() {
   std::cout << "Range: " << range << "\n";
 
   TimeTask("Compute", [&] {
-    std::transform(std::execution::par_unseq, u_inputs.begin(), u_inputs.end(),
+    std::transform(policy_t, u_inputs.begin(), u_inputs.end(),
                    u_sorted_morton_keys.begin(), [&](const auto& input) {
                      return PointToCode(input.x(), input.y(), input.z(),
                                         min_coord, range);
@@ -59,12 +62,11 @@ int main() {
   std::vector<Code_t>::iterator last_unique_it;
 
   TimeTask("Sort", [&] {
-    std::sort(std::execution::par, u_sorted_morton_keys.begin(),
+    std::sort(policy_t, u_sorted_morton_keys.begin(),
               u_sorted_morton_keys.end());
 
-    last_unique_it =
-        std::unique(std::execution::par, u_sorted_morton_keys.begin(),
-                    u_sorted_morton_keys.end());
+    last_unique_it = std::unique(policy_t, u_sorted_morton_keys.begin(),
+                                 u_sorted_morton_keys.end());
   });
 
   const auto num_unique_keys =
@@ -72,17 +74,15 @@ int main() {
   const auto num_brt_nodes = num_unique_keys - 1;
 
   TimeTask("Build Radix Tree", [&] {
-    std::for_each_n(std::execution::par, indices.begin(), num_brt_nodes,
-                    [&](const int i) {
-                      ProcessInternalNodesHelper(num_unique_keys,
-                                                 u_sorted_morton_keys.data(), i,
-                                                 u_brt_nodes.data());
-                    });
+    std::for_each_n(policy_t, indices.begin(), num_brt_nodes, [&](const int i) {
+      ProcessInternalNodesHelper(num_unique_keys, u_sorted_morton_keys.data(),
+                                 i, u_brt_nodes.data());
+    });
   });
 
   TimeTask("Count & Prefix Sum", [&] {
     u_edge_count[0] = 1;
-    std::for_each(std::execution::par, indices.begin() + 1,
+    std::for_each(policy_t, indices.begin() + 1,
                   indices.begin() + num_brt_nodes, [&](const int i) {
                     CalculateEdgeCountHelper(i, u_edge_count.data(),
                                              u_brt_nodes.data());
@@ -98,14 +98,17 @@ int main() {
   std::cout << "u_oc_offset.back(): " << u_oc_offset.back() << "\n";
 
   const auto num_oc_nodes = u_oc_offset.back();
-  std::vector<oct::OctNode> oc_nodes(num_oc_nodes);
+  std::vector<oct::OctNode> oc_nodes;  //(num_oc_nodes);
+
+  TimeTask("Allocate Octree Nodes", [&] { oc_nodes.resize(num_oc_nodes); });
 
   PrintMemoryUsage(VectorInfo<oct::OctNode>{oc_nodes, "Octree Nodes"});
 
+  Code_t root_prefix;
+  int root_level;
   TimeTask("Octree Nodes", [&] {
-    const auto root_level = u_brt_nodes[0].delta_node / 3;
-    const Code_t root_prefix =
-        u_sorted_morton_keys[0] >> (kCodeLen - (root_level * 3));
+    root_level = u_brt_nodes[0].delta_node / 3;
+    root_prefix = u_sorted_morton_keys[0] >> (kCodeLen - (root_level * 3));
 
     float dec_x, dec_y, dec_z;
     CodeToPoint(root_prefix << (kCodeLen - (root_level * 3)), dec_x, dec_y,
@@ -113,15 +116,27 @@ int main() {
     oc_nodes[0].cornor = {dec_x, dec_y, dec_z};
     oc_nodes[0].cell_size = range;
 
-    std::for_each(std::execution::par, indices.begin() + 1,
+    std::for_each(policy_t, indices.begin() + 1,
                   indices.begin() + num_brt_nodes, [&](const int i) {
                     MakeNodesHelper(
                         i, oc_nodes.data(), u_oc_offset.data(),
                         u_edge_count.data(), u_sorted_morton_keys.data(),
                         u_brt_nodes.data(), min_coord, range, root_level);
                   });
-    // }
   });
+
+  TimeTask("Link Nodes", [&] {
+    std::for_each(policy_t, indices.begin(), indices.begin() + num_brt_nodes,
+                  [&](const int i) {
+                    LinkNodesHelper(i, oc_nodes.data(), u_oc_offset.data(),
+                                    u_edge_count.data(),
+                                    u_sorted_morton_keys.data(),
+                                    u_brt_nodes.data());
+                  });
+  });
+
+  CheckTree(root_prefix, root_level * 3, oc_nodes.data(), 0,
+            u_sorted_morton_keys.data());
 
   return 0;
 }
