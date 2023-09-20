@@ -16,11 +16,11 @@ _NODISCARD inline int CalculateEdgeCountHelper_v2(
   return my_depth - parent_depth;
 }
 
-inline void CalculateEdgeCountKernel(int* edge_count,
-                                     const brt::InnerNodes* inners,
-                                     const int num_brt_nodes) {
-  // root has no parent, so don't do for index 0
-  for (int i = 1; i < num_brt_nodes; ++i) {
-    CalculateEdgeCountHelper(i, edge_count, inners);
-  }
-}
+// inline void CalculateEdgeCountKernel(int* edge_count,
+//                                      const brt::InnerNodes* inners,
+//                                      const int num_brt_nodes) {
+//   // root has no parent, so don't do for index 0
+//   for (int i = 1; i < num_brt_nodes; ++i) {
+//     CalculateEdgeCountHelper(i, edge_count, inners);
+//   }
+// }
