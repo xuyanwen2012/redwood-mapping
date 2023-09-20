@@ -103,7 +103,6 @@ static void BM_transform_points_to_morton(bm::State &state,
   std::vector<float3> inputs(state.range(0), {1.0f, 2.0f, 3.0f});
   std::vector<Code_t> outputs(state.range(0));
 
-  // Parrallel
   for (auto _ : state) {
     std::transform(policy, inputs.begin(), inputs.end(), outputs.begin(),
                    [&](const auto &input) {

@@ -3,12 +3,10 @@
 #include <array>
 #include <execution>
 #include <iostream>
-#include <iterator>
 #include <random>
 #include <vector>
 
 #include "Common.hpp"
-#include "Statistics.hpp"
 #include "brt/RadixTree.hpp"
 #include "octree/EdgeCount.hpp"
 #include "octree/Octree.hpp"
@@ -25,12 +23,6 @@ int main() {
   std::vector<brt::InnerNodes> u_brt_nodes(input_size);
   std::vector<int> u_edge_count(input_size);
   std::vector<int> u_oc_offset(input_size);
-
-  PrintMemoryUsage(VectorInfo<Eigen::Vector3f>{u_inputs, "Input Cloud"},
-                   VectorInfo<Code_t>{u_sorted_morton_keys, "Morton Keys"},
-                   VectorInfo<brt::InnerNodes>{u_brt_nodes, "Brt Nodes"},
-                   VectorInfo<int>{u_edge_count, "Edge Counts"},
-                   VectorInfo<int>{u_oc_offset, "Oct Offset"});
 
   std::generate(u_inputs.begin(), u_inputs.end(), [&] {
     const auto x = dis(gen);
@@ -49,6 +41,7 @@ int main() {
   std::cout << "Range: " << range << "\n";
 
   TimeTask("Compute", [&] {
+    // Parrallel
     std::transform(std::execution::par_unseq, u_inputs.begin(), u_inputs.end(),
                    u_sorted_morton_keys.begin(), [&](const auto& input) {
                      return PointToCode(input.x(), input.y(), input.z(),
@@ -56,19 +49,17 @@ int main() {
                    });
   });
 
-  std::vector<Code_t>::iterator last_unique_it;
-
   TimeTask("Sort", [&] {
+    // Parallel sort using std::execution::par
     std::sort(std::execution::par, u_sorted_morton_keys.begin(),
               u_sorted_morton_keys.end());
 
-    last_unique_it =
-        std::unique(std::execution::par, u_sorted_morton_keys.begin(),
-                    u_sorted_morton_keys.end());
+    u_sorted_morton_keys.erase(
+        std::unique(u_sorted_morton_keys.begin(), u_sorted_morton_keys.end()),
+        u_sorted_morton_keys.end());
   });
 
-  const auto num_unique_keys =
-      std::distance(u_sorted_morton_keys.begin(), last_unique_it);
+  const auto num_unique_keys = u_sorted_morton_keys.size();
   const auto num_brt_nodes = num_unique_keys - 1;
 
   TimeTask("Build Radix Tree", [&] {
@@ -88,19 +79,16 @@ int main() {
                                              u_brt_nodes.data());
                   });
 
-    // Can't parallel this
     std::partial_sum(u_edge_count.begin(), u_edge_count.end(),
                      u_oc_offset.begin() + 1);
     u_oc_offset[0] = 0;
   });
 
-  std::cout << "Unique keys: " << num_unique_keys << "\n";
+  std::cout << "Unique keys: " << u_sorted_morton_keys.size() << "\n";
   std::cout << "u_oc_offset.back(): " << u_oc_offset.back() << "\n";
 
   const auto num_oc_nodes = u_oc_offset.back();
   std::vector<oct::OctNode> oc_nodes(num_oc_nodes);
-
-  PrintMemoryUsage(VectorInfo<oct::OctNode>{oc_nodes, "Octree Nodes"});
 
   TimeTask("Octree Nodes", [&] {
     const auto root_level = u_brt_nodes[0].delta_node / 3;

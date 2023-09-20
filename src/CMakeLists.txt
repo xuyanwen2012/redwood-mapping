@@ -3,7 +3,6 @@ project(redwood_map LANGUAGES CXX)
 
 add_library(redwood_map)
 
-
 file(GLOB HEADER_LIST CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/include/*.hpp")
 
 target_sources(
@@ -11,10 +10,8 @@ target_sources(
   PRIVATE Test.cpp
   PUBLIC ${HEADER_LIST})
 
-  target_include_directories(redwood_map
-  PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(redwood_map PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
-  
 target_compile_features(redwood_map PUBLIC cxx_std_14)
 
 # Add TBB
