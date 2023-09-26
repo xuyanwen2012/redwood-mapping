@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(MyApp LANGUAGES CXX)
 
-# file(GLOB HEADER_LIST CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/include/*.hpp")
-
 add_executable(MyApp Main.cpp)
 
 target_compile_features(MyApp PRIVATE cxx_std_17)

@@ -19,6 +19,7 @@ static int RandomIntInRange(const int min, const int max) {
   static std::uniform_int_distribution<int> dis(min, max);
   return dis(gen);
 }
+
 static float RandomFloatInRange(const float min, const float max) {
   static thread_local std::mt19937 gen(114514);  // NOLINT(cert-msc51-cpp)
   static std::uniform_real_distribution<float> dis(min, max);

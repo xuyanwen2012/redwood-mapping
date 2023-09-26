@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Redwood LANGUAGES CXX)
+project(Redwood)
 
 add_subdirectory(src)
 add_subdirectory(app)
