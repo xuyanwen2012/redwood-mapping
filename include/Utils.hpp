@@ -3,6 +3,12 @@
 #include <chrono>
 #include <iostream>
 
+#ifdef __CUDACC__
+#define H_D_I __host__ __device__ __forceinline__
+#else
+#define H_D_I
+#endif
+
 // [[nodiscard]] attributes on STL functions
 #ifndef _HAS_NODISCARD
 #ifndef __has_cpp_attribute
@@ -29,8 +35,7 @@ void TimeTask(const std::string& task_name, Func&& f) {
 
   const auto t1 = std::chrono::high_resolution_clock::now();
   const auto time_span =
-      std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
-
+      std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0);
   std::cout << "Finished " << task_name << "! Time took: " << time_span.count()
-            << "ms. " << std::endl;
+            << "us. " << std::endl;
 }
