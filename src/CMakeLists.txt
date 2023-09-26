@@ -17,6 +17,7 @@ target_compile_features(redwood_map PUBLIC cxx_std_14)
 # Add TBB
 find_package(TBB REQUIRED)
 target_link_libraries(redwood_map PRIVATE TBB::tbb)
+message(STATUS "TBB version: ${TBB_VERSION}")
 
 # Add Eigen
 find_package(Eigen3 REQUIRED)

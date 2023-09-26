@@ -4,11 +4,19 @@
 #include <iostream>
 #include <vector>
 
+#include "Utils.hpp"
+
 template <typename T>
 struct VectorInfo {
-  std::vector<T>& data;
+  const std::vector<T>& data;
   std::string name;
 };
+
+template <typename T>
+_NODISCARD VectorInfo<T> MakeVectorInfo(const std::vector<T>& data,
+                                        const std::string& name) noexcept {
+  return {data, name};
+}
 
 template <typename... T>
 void PrintMemoryUsage(const VectorInfo<T>&... vectors) {
@@ -27,8 +35,6 @@ void PrintMemoryUsage(const VectorInfo<T>&... vectors) {
             << "-----------------" << std::setw(15) << "------------"
             << std::endl;
 
-  // Calculate and print memory usage in megabytes and percentages for each
-  // vector
   (..., (std::cout << std::setw(30) << vectors.name << std::fixed
                    << std::setprecision(2) << std::setw(20)
                    << (static_cast<double>(vectors.data.size() * sizeof(T)) /

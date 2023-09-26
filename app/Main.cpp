@@ -13,7 +13,6 @@
 #include "octree/EdgeCount.hpp"
 #include "octree/Octree.hpp"
 
-// #define policy_t std::execution::seq
 #define policy_t std::execution::par
 
 int main() {
@@ -25,17 +24,19 @@ int main() {
   // Preallocate all the memory
   std::vector<Eigen::Vector3f> u_inputs(input_size);
   std::vector<Code_t> u_sorted_morton_keys(input_size);
+
   std::vector<brt::InnerNodes> u_brt_nodes(input_size);
+
   std::vector<int> u_edge_count(input_size);
   std::vector<int> u_oc_offset(input_size);
   std::vector<oct::OctNode> oc_nodes(input_size);
 
-  PrintMemoryUsage(VectorInfo<Eigen::Vector3f>{u_inputs, "Input Cloud"},
-                   VectorInfo<Code_t>{u_sorted_morton_keys, "Morton Keys"},
-                   VectorInfo<brt::InnerNodes>{u_brt_nodes, "Brt Nodes"},
-                   VectorInfo<int>{u_edge_count, "Edge Counts"},
-                   VectorInfo<int>{u_oc_offset, "Oct Offset"},
-                   VectorInfo<oct::OctNode>{oc_nodes, "Octree Nodes"});
+  PrintMemoryUsage(MakeVectorInfo(u_inputs, "Input Cloud"),
+                   MakeVectorInfo(u_sorted_morton_keys, "Morton Keys"),
+                   MakeVectorInfo(u_brt_nodes, "Brt Nodes"),
+                   MakeVectorInfo(u_edge_count, "Edge Counts"),
+                   MakeVectorInfo(u_oc_offset, "Oct Offset"),
+                   MakeVectorInfo(oc_nodes, "Octree Nodes"));
 
   std::generate(u_inputs.begin(), u_inputs.end(), [&] {
     const auto x = dis(gen);
