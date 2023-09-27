@@ -3,7 +3,7 @@
 #include <cassert>
 
 #include "../Intrinsics.hpp"
-#include "Math.hpp"
+// #include "Math.hpp"
 #include "Morton.hpp"
 #include "Node.hpp"
 
@@ -87,21 +87,5 @@ inline void ProcessInternalNodesHelper(const int key_num,
   if (math::min<int>(i, j) != split) brt_nodes[left].parent = i;
   if (math::max<int>(i, j) != split + 1) brt_nodes[right].parent = i;
 }
-
-// class RadixTree {
-//  public:
-//   RadixTree(const Code_t* sorted_morton_keys, const size_t num_unique_keys)
-//       : num_brt_nodes_(num_unique_keys - 1) {
-//     for (int i = 0; i < num_brt_nodes_; ++i) {
-//       ProcessInternalNodesHelper(num_unique_keys, sorted_morton_keys, i,
-//                                  brt_nodes_);
-//     }
-//   }
-
-//  private:
-//   size_t num_brt_nodes_;
-//   Code_t* morton_keys_;
-//   InnerNodes* brt_nodes_;
-// };
 
 }  // namespace brt
