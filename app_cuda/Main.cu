@@ -7,7 +7,6 @@
 
 #include "Kernels.cuh"
 #include "Morton.hpp"
-// #include "RadixTree.cuh"
 #include "Usm.hpp"
 
 struct MortonFunctor {
@@ -38,21 +37,21 @@ void CudaWarmUp() {
 //   brt_cuda::InnerNodes* u_brt_nodes;
 // };
 
-__device__ __host__ __forceinline__ int Sign(const int val) noexcept {
+__device__ __host__ __forceinline__ int Sign(const int val) {
   return (val > 0) - (val < 0);
 }
 
-__device__ __host__ __forceinline__ int Divide2Ceil(const int x) noexcept {
+__device__ __host__ __forceinline__ int Divide2Ceil(const int x) {
   return (x + 1) >> 1;
 }
 
 namespace brt_cuda {
 
-__device__ __host__ __forceinline__ int MakeLeaf(const int index) noexcept {
+__device__ __host__ __forceinline__ int MakeLeaf(const int index) {
   return index ^ ((-1 ^ index) & 1UL << (sizeof(int) * 8 - 1));
 }
 
-__device__ __host__ __forceinline__ int MakeInternal(const int index) noexcept {
+__device__ __host__ __forceinline__ int MakeInternal(const int index) {
   return index;
 }
 
@@ -76,15 +75,13 @@ __device__ __forceinline__ int Delta(const Code_t* morton_keys, const int i,
 
 __device__ __forceinline__ int DeltaSafe(const int key_num,
                                          const Code_t* morton_keys, const int i,
-                                         const int j) noexcept {
+                                         const int j) {
   return (j < 0 || j >= key_num) ? -1 : Delta(morton_keys, i, j);
 }
 
 __device__ __forceinline__ void ProcessInternalNodesHelper(
     const int key_num, const Code_t* morton_keys, const int i,
     InnerNodes* brt_cuda_nodes) {
-  // printf("i == 0\n");
-
   const auto direction{Sign(Delta(morton_keys, i, i + 1) -
                             DeltaSafe(key_num, morton_keys, i, i - 1))};
 
@@ -134,12 +131,12 @@ __global__ void BuildRadixTreeKernel(const Code_t* sorted_morton,
                                      brt_cuda::InnerNodes* nodes,
                                      const size_t num_unique_keys) {
   const auto i = threadIdx.x + blockIdx.x * blockDim.x;
-  printf("i == %d\n", i);
-  // const auto num_brt_nodes = num_unique_keys - 1;
-  // if (i < num_brt_nodes) {
-  //   brt_cuda::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i,
-  //                                        nodes);
-  // }
+  // printf("i == %d\n", i);
+  const auto num_brt_nodes = num_unique_keys - 1;
+  if (i < num_brt_nodes) {
+    brt_cuda::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i,
+                                         nodes);
+  }
 }
 
 int main() {
@@ -248,7 +245,8 @@ int main() {
   // Print out the parameters
   std::cout << "num_threads:\t" << num_threads << std::endl;
   std::cout << "num_blocks:\t" << num_blocks << std::endl;
-  BuildRadixTreeKernel<<<num_threads, num_blocks>>>(u_morton_keys, u_brt_nodes,
+
+  BuildRadixTreeKernel<<<num_blocks, num_threads>>>(u_morton_keys, u_brt_nodes,
                                                     num_unique);
   HANDLE_ERROR(cudaDeviceSynchronize());
 
@@ -265,7 +263,5 @@ int main() {
   redwood::UsmFree(u_sorted_morton_keys);
   redwood::UsmFree(d_num_selected_out);
   redwood::UsmFree(u_brt_nodes);
-  cudaEventDestroy(start);
-  cudaEventDestroy(stop);
   return 0;
 }
