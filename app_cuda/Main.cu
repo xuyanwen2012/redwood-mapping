@@ -33,10 +33,6 @@ void CudaWarmUp() {
   for (auto i = 0; i < 5; ++i) Empty<<<1, 1>>>();
 }
 
-// struct RadixTree {
-//   brt_cuda::InnerNodes* u_brt_nodes;
-// };
-
 __device__ __host__ __forceinline__ int Sign(const int val) {
   return (val > 0) - (val < 0);
 }
@@ -89,7 +85,7 @@ __device__ __forceinline__ void ProcessInternalNodesHelper(
 
   int I_max{2};
   while (DeltaSafe(key_num, morton_keys, i, i + I_max * direction) > delta_min)
-    I_max <<= 2;  // aka, *= 2
+    I_max <<= 2;  // *= 2
 
   // Find the other end using binary search.
   int I{0};
@@ -101,8 +97,8 @@ __device__ __forceinline__ void ProcessInternalNodesHelper(
 
   // Find the split position using binary search.
   const auto delta_node{DeltaSafe(key_num, morton_keys, i, j)};
-  auto s{0};
 
+  auto s{0};
   int t{I};
   do {
     t = Divide2Ceil(t);
@@ -131,7 +127,6 @@ __global__ void BuildRadixTreeKernel(const Code_t* sorted_morton,
                                      brt_cuda::InnerNodes* nodes,
                                      const size_t num_unique_keys) {
   const auto i = threadIdx.x + blockIdx.x * blockDim.x;
-  // printf("i == %d\n", i);
   const auto num_brt_nodes = num_unique_keys - 1;
   if (i < num_brt_nodes) {
     brt_cuda::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i,
@@ -139,14 +134,7 @@ __global__ void BuildRadixTreeKernel(const Code_t* sorted_morton,
   }
 }
 
-int main() {
-  constexpr auto num_elements = 1280 * 720;
-  constexpr auto min_coord = 0.0f;
-  constexpr auto max_coord = 1024.0f;
-  constexpr auto range = max_coord - min_coord;
-
-  constexpr MortonFunctor morton_functor(min_coord, range);
-
+void PrintCudaDeviceInfo() {
   int deviceCount;
   HANDLE_ERROR(cudaGetDeviceCount(&deviceCount));
 
@@ -158,11 +146,21 @@ int main() {
     std::cout << "Compute Capability (SM version): " << deviceProp.major << "."
               << deviceProp.minor << std::endl;
   }
+}
+
+int main() {
+  constexpr auto num_elements = 1280 * 720;
+  constexpr auto min_coord = 0.0f;
+  constexpr auto max_coord = 1024.0f;
+  constexpr auto range = max_coord - min_coord;
+  constexpr MortonFunctor morton_functor(min_coord, range);
+
+  PrintCudaDeviceInfo();
 
   auto u_input = redwood::UsmMalloc<Eigen::Vector3f>(num_elements);
   auto u_morton_keys = redwood::UsmMalloc<Code_t>(num_elements);
   auto u_sorted_morton_keys = redwood::UsmMalloc<Code_t>(num_elements);
-  auto d_num_selected_out = redwood::UsmMalloc<int>(1);
+  auto u_num_selected_out = redwood::UsmMalloc<int>(1);
 
   auto u_brt_nodes = redwood::UsmMalloc<brt_cuda::InnerNodes>(num_elements);
 
@@ -216,7 +214,7 @@ int main() {
   // Unique
   cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes,
                             u_sorted_morton_keys, u_morton_keys,
-                            d_num_selected_out, num_elements);
+                            u_num_selected_out, num_elements);
 
   if (last_temp_storage_bytes < temp_storage_bytes) {
     HANDLE_ERROR(cudaFree(d_temp_storage));
@@ -227,11 +225,11 @@ int main() {
 
   cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes,
                             u_sorted_morton_keys, u_morton_keys,
-                            d_num_selected_out, num_elements);
+                            u_num_selected_out, num_elements);
 
   HANDLE_ERROR(cudaDeviceSynchronize());
 
-  const auto num_unique = *d_num_selected_out;
+  const auto num_unique = *u_num_selected_out;
 
   std::cout << "num_unique:\t" << num_unique << std::endl;
 
@@ -261,7 +259,7 @@ int main() {
   redwood::UsmFree(u_input);
   redwood::UsmFree(u_morton_keys);
   redwood::UsmFree(u_sorted_morton_keys);
-  redwood::UsmFree(d_num_selected_out);
+  redwood::UsmFree(u_num_selected_out);
   redwood::UsmFree(u_brt_nodes);
   return 0;
 }
