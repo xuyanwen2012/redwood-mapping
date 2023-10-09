@@ -50,7 +50,7 @@ struct Morton {
       : min_coord(min_coord), range(range) {}
 
   __host__ __device__ __forceinline__ Code_t
-  operator()(const float3& point) const {
+  operator()(const float3 &point) const {
     return PointToCode(point.x, point.x, point.z, 0.0f, 1.0f);
   }
 
@@ -59,21 +59,21 @@ struct Morton {
 
 struct CustomLess {
   template <typename DataType>
-  __device__ bool operator()(const DataType& lhs, const DataType& rhs) {
+  __device__ bool operator()(const DataType &lhs, const DataType &rhs) {
     return lhs < rhs;
   }
 };
 
-std::ostream& operator<<(std::ostream& os, const float3& v) {
+std::ostream &operator<<(std::ostream &os, const float3 &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-__global__ void generateRandomFloat3(float3* output, int size) {
+__global__ void generateRandomFloat3(float3 *output, int size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
   curandState state;
-  curand_init(0, tid, 0, &state);  // Initialize the random number generator
+  curand_init(0, tid, 0, &state); // Initialize the random number generator
 
   while (tid < size) {
     float rand_x = curand_uniform(&state) * 1024.0f;
@@ -86,7 +86,7 @@ __global__ void generateRandomFloat3(float3* output, int size) {
   }
 }
 
-__global__ void convertMortonOnly(const float3* input, Code_t* output,
+__global__ void convertMortonOnly(const float3 *input, Code_t *output,
                                   const int size, const float min_coord,
                                   const float range) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -102,8 +102,8 @@ __global__ void convertMortonOnly(const float3* input, Code_t* output,
   }
 }
 
-static void BM_rand_float3_gen_cpu(bm::State& state) {
-  thread_local std::mt19937 gen(114514);  // NOLINT(cert-msc51-cpp)
+static void BM_rand_float3_gen_cpu(bm::State &state) {
+  thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
   std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
 
   const auto num_elements = state.range(0);
@@ -120,9 +120,9 @@ static void BM_rand_float3_gen_cpu(bm::State& state) {
   }
 }
 
-static void BM_rand_float3_gen(bm::State& state) {
+static void BM_rand_float3_gen(bm::State &state) {
   const auto num_elements = state.range(0);
-  float3* u_input;
+  float3 *u_input;
   BENCH_CUDA_TRY(cudaMallocManaged(&u_input, num_elements * sizeof(float3)));
 
   for (auto _ : state) {
@@ -135,16 +135,17 @@ static void BM_rand_float3_gen(bm::State& state) {
   BENCH_CUDA_TRY(cudaFree(u_input));
 }
 
-static void BM_compute_morton_only(bm::State& state) {
+static void BM_compute_morton_only(bm::State &state) {
   const auto num_elements = state.range(0);
-  float3* u_input;
-  Code_t* u_output;
+  const auto num_threads = state.range(1);
+  float3 *u_input;
+  Code_t *u_output;
   cudaMallocManaged(&u_input, num_elements * sizeof(float3));
   cudaMallocManaged(&u_output, num_elements * sizeof(Code_t));
 
   for (auto _ : state) {
-    cuda_event_timer raii{state};
-    const dim3 blockSize(1024);
+    cuda_event_timer raii{state, true};
+    const dim3 blockSize(num_threads);
     const dim3 gridSize((num_elements + blockSize.x - 1) / blockSize.x);
     convertMortonOnly<<<gridSize, blockSize>>>(u_input, u_output, num_elements,
                                                0.0f, 1024.0f);
@@ -154,10 +155,10 @@ static void BM_compute_morton_only(bm::State& state) {
   BENCH_CUDA_TRY(cudaFree(u_output));
 }
 
-static void BM_radixsort_morton_only(bm::State& state) {
+static void BM_radixsort_morton_only(bm::State &state) {
   const auto num_elements = state.range(0);
-  Code_t* u_mortons;
-  Code_t* u_sorted_mortons;
+  Code_t *u_mortons;
+  Code_t *u_sorted_mortons;
   BENCH_CUDA_TRY(cudaMallocManaged(&u_mortons, num_elements * sizeof(Code_t)));
   BENCH_CUDA_TRY(
       cudaMallocManaged(&u_sorted_mortons, num_elements * sizeof(Code_t)));
@@ -167,7 +168,7 @@ static void BM_radixsort_morton_only(bm::State& state) {
   for (auto _ : state) {
     cuda_event_timer raii{state};
 
-    void* d_temp_storage = nullptr;
+    void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
     BENCH_CUDA_TRY(cub::DeviceRadixSort::SortKeys(
         d_temp_storage, temp_storage_bytes, u_mortons, u_sorted_mortons,
@@ -186,43 +187,45 @@ static void BM_radixsort_morton_only(bm::State& state) {
   BENCH_CUDA_TRY(cudaFree(u_sorted_mortons));
 }
 
-static void BM_transform_morton_and_merge_sort(bm::State& state) {
-  const auto num_elements = state.range(0);
-  float3* u_input;
-  Code_t* u_sorted_mortons;
-  BENCH_CUDA_TRY(cudaMallocManaged(&u_input, num_elements * sizeof(float3)));
-  BENCH_CUDA_TRY(
-      cudaMallocManaged(&u_sorted_mortons, num_elements * sizeof(Code_t)));
+// static void BM_transform_morton_and_merge_sort(bm::State &state) {
+//   const auto num_elements = state.range(0);
+//   float3 *u_input;
+//   Code_t *u_sorted_mortons;
+//   BENCH_CUDA_TRY(cudaMallocManaged(&u_input, num_elements * sizeof(float3)));
+//   BENCH_CUDA_TRY(
+//       cudaMallocManaged(&u_sorted_mortons, num_elements * sizeof(Code_t)));
 
-  cub::CachingDeviceAllocator g_allocator(true);
+//   cub::CachingDeviceAllocator g_allocator(true);
 
-  for (auto _ : state) {
-    cuda_event_timer raii{state};
+//   for (auto _ : state) {
+//     cuda_event_timer raii{state};
 
-    // Transform and Sort together
-    constexpr Morton conversion_op(0.0f, 1024.0f);
-    const cub::TransformInputIterator<Code_t, Morton, float3*> itr(
-        u_input, conversion_op);
+//     // Transform and Sort together
+//     constexpr Morton conversion_op(0.0f, 1024.0f);
+//     const cub::TransformInputIterator<Code_t, Morton, float3 *> itr(
+//         u_input, conversion_op);
 
-    void* d_temp_storage = nullptr;
-    size_t temp_storage_bytes = 0;
+//     void *d_temp_storage = nullptr;
+//     size_t temp_storage_bytes = 0;
 
-    cub::DeviceMergeSort::SortKeysCopy(d_temp_storage, temp_storage_bytes, itr,
-                                       u_sorted_mortons, num_elements,
-                                       CustomLess());
+//     cub::DeviceMergeSort::SortKeysCopy(d_temp_storage, temp_storage_bytes,
+//     itr,
+//                                        u_sorted_mortons, num_elements,
+//                                        CustomLess());
 
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+//     cudaMalloc(&d_temp_storage, temp_storage_bytes);
 
-    cub::DeviceMergeSort::SortKeysCopy(d_temp_storage, temp_storage_bytes, itr,
-                                       u_sorted_mortons, num_elements,
-                                       CustomLess());
+//     cub::DeviceMergeSort::SortKeysCopy(d_temp_storage, temp_storage_bytes,
+//     itr,
+//                                        u_sorted_mortons, num_elements,
+//                                        CustomLess());
 
-    bm::DoNotOptimize(u_sorted_mortons);
-  }
+//     bm::DoNotOptimize(u_sorted_mortons);
+//   }
 
-  BENCH_CUDA_TRY(cudaFree(u_input));
-  BENCH_CUDA_TRY(cudaFree(u_sorted_mortons));
-}
+//   BENCH_CUDA_TRY(cudaFree(u_input));
+//   BENCH_CUDA_TRY(cudaFree(u_sorted_mortons));
+// }
 
 BENCHMARK(BM_rand_float3_gen_cpu)
     ->RangeMultiplier(10)
@@ -236,8 +239,7 @@ BENCHMARK(BM_rand_float3_gen)
     ->Unit(bm::kMillisecond);
 
 BENCHMARK(BM_compute_morton_only)
-    ->RangeMultiplier(10)
-    ->Range(10'000, 1'000'000)
+    ->ArgsProduct({{1'000'000}, {32, 64, 128, 256, 512, 1024}})
     ->UseManualTime()
     ->Unit(bm::kMillisecond);
 
@@ -247,10 +249,10 @@ BENCHMARK(BM_radixsort_morton_only)
     ->UseManualTime()
     ->Unit(bm::kMillisecond);
 
-BENCHMARK(BM_transform_morton_and_merge_sort)
-    ->RangeMultiplier(10)
-    ->Range(10'000, 1'000'000)
-    ->UseManualTime()
-    ->Unit(bm::kMillisecond);
+// BENCHMARK(BM_transform_morton_and_merge_sort)
+//     ->RangeMultiplier(10)
+//     ->Range(10'000, 1'000'000)
+//     ->UseManualTime()
+//     ->Unit(bm::kMillisecond);
 
 BENCHMARK_MAIN();

@@ -32,12 +32,14 @@ static void f32_pairwise_accumulation_aligned(bm::State &state) {
 
 static void i32_addition_semirandom(bm::State &state) {
   int32_t a = std::rand(), b = std::rand(), c = 0;
-  for (auto _ : state) bm::DoNotOptimize(c = (++a) + (++b));
+  for (auto _ : state)
+    bm::DoNotOptimize(c = (++a) + (++b));
 }
 
 static void f64_sin(bm::State &state) {
   double argument = std::rand(), result = 0;
-  for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 1.0));
+  for (auto _ : state)
+    bm::DoNotOptimize(result = std::sin(argument += 1.0));
 }
 
 static void f64_sin_maclaurin(bm::State &state) {

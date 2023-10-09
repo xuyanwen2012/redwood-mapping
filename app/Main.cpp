@@ -16,7 +16,7 @@
 #define policy_t std::execution::par
 
 int main() {
-  thread_local std::mt19937 gen(114514);  // NOLINT(cert-msc51-cpp)
+  thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
   static std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
 
   constexpr auto input_size = 1280 * 720;
@@ -60,7 +60,7 @@ int main() {
 
   TimeTask("All Stages", [&] {
     std::transform(policy_t, u_inputs.begin(), u_inputs.end(),
-                   u_sorted_morton_keys.begin(), [&](const auto& input) {
+                   u_sorted_morton_keys.begin(), [&](const auto &input) {
                      return PointToCode(input.x(), input.y(), input.z(),
                                         min_coord, range);
                    });

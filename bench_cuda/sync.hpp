@@ -20,12 +20,12 @@
 #include <benchmark/benchmark.h>
 #include <cuda_runtime_api.h>
 
-#define BENCH_CUDA_TRY(call)                            \
-  do {                                                  \
-    auto const status = (call);                         \
-    if (cudaSuccess != status) {                        \
-      throw std::runtime_error("CUDA error detected."); \
-    }                                                   \
+#define BENCH_CUDA_TRY(call)                                                   \
+  do {                                                                         \
+    auto const status = (call);                                                \
+    if (cudaSuccess != status) {                                               \
+      throw std::runtime_error("CUDA error detected.");                        \
+    }                                                                          \
   } while (0);
 
 /**
@@ -71,7 +71,7 @@
  *
  */
 class cuda_event_timer {
- public:
+public:
   /**
    * @brief Constructs a `cuda_event_timer` beginning a manual timing range.
    *
@@ -126,7 +126,7 @@ class cuda_event_timer {
     BENCH_CUDA_TRY(cudaEventDestroy(stop_));
   }
 
- private:
+private:
   cudaEvent_t start_;
   cudaEvent_t stop_;
   cudaStream_t stream_;
