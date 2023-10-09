@@ -132,6 +132,7 @@ __global__ void BuildRadixTreeKernel(const Code_t* sorted_morton,
     brt_cuda::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i,
                                          nodes);
   }
+
 }
 
 void PrintCudaDeviceInfo() {
