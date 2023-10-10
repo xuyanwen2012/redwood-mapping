@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <cub/cub.cuh>
+#include <execution>
 #include <iostream>
+#include <numeric>
+#include <random>
 
+#include "brt.cuh"
 #include "morton.cuh"
 #include "sync.hpp"
 
@@ -86,6 +90,83 @@ static void BM_unique_morton(bm::State &state) {
   BENCH_CUDA_TRY(cudaFree(u_input));
   BENCH_CUDA_TRY(cudaFree(u_output));
 }
+
+class RadixTreeFixture : public bm::Fixture {
+public:
+  void SetUp(const bm::State &state) override {
+    const auto num_elements = state.range(0);
+    cudaMallocManaged(&u_input, num_elements * sizeof(float3));
+    cudaMallocManaged(&u_mortons, num_elements * sizeof(Code_t));
+    BENCH_CUDA_TRY(cudaDeviceSynchronize());
+
+    // init random inputs
+    const auto min_coord = 0.0f;
+    const auto range = 1024.0f;
+
+    thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
+    static std::uniform_real_distribution<float> dis(min_coord, range);
+
+    std::generate_n(std::execution::par, u_input, num_elements, [&]() {
+      return float3{dis(gen), dis(gen), dis(gen)};
+    });
+
+    std::transform(std::execution::par, u_input, u_input + num_elements,
+                   u_mortons, [&](const auto &pt) {
+                     return PointToCode(pt.x, pt.y, pt.z, min_coord, range);
+                   });
+    std::sort(std::execution::par, u_mortons, u_mortons + num_elements);
+
+    const auto last_unique_it =
+        std::unique(std::execution::par, u_mortons, u_mortons + num_elements);
+
+    num_unique_keys = std::distance(u_mortons, last_unique_it);
+
+    const auto num_brt_nodes = num_unique_keys - 1;
+    cudaMallocManaged(&u_inner_nondes, num_brt_nodes * sizeof(brt::InnerNodes));
+
+    // prepare for the later benchmark
+    constexpr auto num_threads = 256;
+    const auto num_blocks = (num_unique_keys + num_threads - 1) / num_threads;
+    BuildRadixTreeKernel<<<num_blocks, num_threads>>>(u_mortons, u_inner_nondes,
+                                                      num_unique_keys);
+    BENCH_CUDA_TRY(cudaDeviceSynchronize());
+  }
+
+  void TearDown(const bm::State &state) override {
+    BENCH_CUDA_TRY(cudaFree(u_input));
+    BENCH_CUDA_TRY(cudaFree(u_mortons));
+    BENCH_CUDA_TRY(cudaFree(u_inner_nondes));
+  }
+
+protected:
+  float3 *u_input;
+  Code_t *u_mortons;
+  int num_unique_keys;
+  brt::InnerNodes *u_inner_nondes;
+};
+
+BENCHMARK_DEFINE_F(RadixTreeFixture, FooTest)(bm::State &st) {
+  const auto num_elements = st.range(0);
+  const auto num_threads = st.range(1);
+
+  brt::InnerNodes *inner_nondes;
+  cudaMallocManaged(&inner_nondes, num_elements * sizeof(brt::InnerNodes));
+
+  for (auto _ : st) {
+    cuda_event_timer raii{st, true};
+
+    const auto num_blocks = (num_elements + num_threads - 1) / num_threads;
+    BuildRadixTreeKernel<<<num_blocks, num_threads>>>(u_mortons, inner_nondes,
+                                                      num_unique_keys);
+    bm::DoNotOptimize(inner_nondes);
+  }
+
+  BENCH_CUDA_TRY(cudaFree(inner_nondes));
+}
+
+BENCHMARK_REGISTER_F(RadixTreeFixture, FooTest)
+    ->ArgsProduct({{10'000'000}, {32, 64, 128, 256, 512, 1024}})
+    ->Unit(bm::kMillisecond);
 
 BENCHMARK(BM_compute_morton_v2_only)
     ->ArgsProduct({{10'000'000}, {32, 64, 128, 256, 512, 1024}})
