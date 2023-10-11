@@ -60,6 +60,10 @@ struct OctNode {
   }
 };
 
+// --------------------------------------------------
+//         Helpers (per data operations)
+// --------------------------------------------------
+
 __host__ __device__ __forceinline__ void
 CalculateEdgeCountHelper(const int i, int *edge_count,
                          const brt::InnerNodes *inners) {
@@ -68,7 +72,58 @@ CalculateEdgeCountHelper(const int i, int *edge_count,
   edge_count[i] = my_depth - parent_depth;
 }
 
+__device__ __forceinline__ void
+MakeNodesHelper(const int i, OctNode *nodes, const int *node_offsets,
+                const int *edge_count, const Code_t *morton_keys,
+                const brt::InnerNodes *inners,
+                const MortonDecoder morton_decoder, const int root_level) {
+  int oct_idx = node_offsets[i];
+  const int n_new_nodes = edge_count[i];
+  const auto tree_range = morton_decoder.range;
+  for (int j = 0; j < n_new_nodes - 1; ++j) {
+    const int level = inners[i].delta_node / 3 - j;
+    const Code_t node_prefix = morton_keys[i] >> (kCodeLen - (3 * level));
+    const int child_idx = static_cast<int>(node_prefix & 0b111);
+    const int parent = oct_idx + 1;
+
+    nodes[parent].SetChild(oct_idx, child_idx);
+
+    // calculate corner point (LSB have already been shifted off)
+    // each cell is half the size of the level above it
+    nodes[oct_idx].cornor =
+        morton_decoder(node_prefix << (kCodeLen - (3 * level)));
+    nodes[oct_idx].cell_size =
+        tree_range / static_cast<float>(1 << (level - root_level));
+
+    oct_idx = parent;
+  }
+
+  if (n_new_nodes > 0) {
+    int rt_parent = inners[i].parent;
+    while (edge_count[rt_parent] == 0) {
+      rt_parent = inners[rt_parent].parent;
+    }
+    const int oct_parent = node_offsets[rt_parent];
+    const int top_level = inners[i].delta_node / 3 - n_new_nodes + 1;
+    const Code_t top_node_prefix =
+        morton_keys[i] >> (kCodeLen - (3 * top_level));
+    const int child_idx = static_cast<int>(top_node_prefix & 0b111);
+
+    nodes[oct_parent].SetChild(oct_idx, child_idx);
+
+    nodes[oct_idx].cornor =
+        morton_decoder(top_node_prefix << (kCodeLen - (3 * top_level)));
+
+    nodes[oct_idx].cell_size =
+        tree_range / static_cast<float>(1 << (top_level - root_level));
+  }
+}
+
 } // namespace oct
+
+// --------------------------------------------------
+//          Kernels (process all data)
+// --------------------------------------------------
 
 __global__ void CalculateEdgeCountKernel(const size_t num_brt_nodes,
                                          int *edge_count,
@@ -76,5 +131,18 @@ __global__ void CalculateEdgeCountKernel(const size_t num_brt_nodes,
   const auto i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < num_brt_nodes) {
     oct::CalculateEdgeCountHelper(i, edge_count, inners);
+  }
+}
+
+__global__ void MakeNodesKernel(const size_t num_brt_nodes, oct::OctNode *nodes,
+                                const int *node_offsets, const int *edge_count,
+                                const Code_t *morton_keys,
+                                const brt::InnerNodes *inners,
+                                const MortonDecoder morton_decoder,
+                                const int root_level) {
+  const auto i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < num_brt_nodes) {
+    oct::MakeNodesHelper(i, nodes, node_offsets, edge_count, morton_keys,
+                         inners, morton_decoder, root_level);
   }
 }

@@ -75,6 +75,7 @@ std::ostream &operator<<(std::ostream &os, const float3 &p) {
 DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, EdgeCountSync, 256)
+DEFINE_SYNC_KERNEL_WRAPPER(MakeNodesKernel, MakeOctreeNodesSync, 256)
 
 DEFINE_CUB_WRAPPER(cub::DeviceRadixSort::SortKeys, CubRadixSort);
 DEFINE_CUB_WRAPPER(cub::DeviceSelect::Unique, CubUnique);
@@ -131,6 +132,9 @@ int main() {
   u_oc_nodes[0].cornor =
       morton_decoder(root_prefix << (kCodeLen - (root_level * 3)));
   u_oc_nodes[0].cell_size = range;
+
+  MakeOctreeNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
+                      u_mortons, u_inner_nodes, morton_decoder, root_level);
 
   // Print out some stats
   std::cout << "num_unique:\t" << num_unique << std::endl;
