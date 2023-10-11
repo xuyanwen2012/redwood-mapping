@@ -13,41 +13,41 @@
 
 namespace bm = benchmark;
 
-namespace {
+// namespace {
 
-#define DEFINE_SYNC_KERNEL_WRAPPER(kernel_name, function_name, num_threads)    \
-  template <typename... Args>                                                  \
-  void function_name(const size_t num_items, Args... args) {                   \
-    const auto num_blocks = (num_items + num_threads - 1) / num_threads;       \
-    kernel_name<<<num_blocks, num_threads>>>(num_items, args...);              \
-    BENCH_CUDA_TRY(cudaDeviceSynchronize());                                   \
-  }
+// #define DEFINE_SYNC_KERNEL_WRAPPER(kernel_name, function_name, num_threads)    \
+//   template <typename... Args>                                                  \
+//   void function_name(const size_t num_items, Args... args) {                   \
+//     const auto num_blocks = (num_items + num_threads - 1) / num_threads;       \
+//     kernel_name<<<num_blocks, num_threads>>>(num_items, args...);              \
+//     BENCH_CUDA_TRY(cudaDeviceSynchronize());                                   \
+//   }
 
-#define DEFINE_CUB_WRAPPER(kernel, wrapper_name)                               \
-  template <typename... Args> void wrapper_name(Args... args) {                \
-    void *d_temp_storage = nullptr;                                            \
-    size_t temp_storage_bytes = 0;                                             \
-    kernel(d_temp_storage, temp_storage_bytes, args...);                       \
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);                           \
-    kernel(d_temp_storage, temp_storage_bytes, args...);                       \
-    BENCH_CUDA_TRY(cudaDeviceSynchronize());                                   \
-  }
+// #define DEFINE_CUB_WRAPPER(kernel, wrapper_name)                               \
+//   template <typename... Args> void wrapper_name(Args... args) {                \
+//     void *d_temp_storage = nullptr;                                            \
+//     size_t temp_storage_bytes = 0;                                             \
+//     kernel(d_temp_storage, temp_storage_bytes, args...);                       \
+//     cudaMalloc(&d_temp_storage, temp_storage_bytes);                           \
+//     kernel(d_temp_storage, temp_storage_bytes, args...);                       \
+//     BENCH_CUDA_TRY(cudaDeviceSynchronize());                                   \
+//   }
 
-} // namespace
+// } // namespace
 
 // ---------------------
 //        Kernels
 // ---------------------
 
-DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
-DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
-DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, EdgeCountSync, 256)
+// DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
+// DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
+// DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, EdgeCountSync, 256)
 // DEFINE_SYNC_KERNEL_WRAPPER(MakeNodesKernel, MakeOctreeNodesSync, 256)
 // DEFINE_SYNC_KERNEL_WRAPPER(LinkNodesKernel, LinkNodesSync, 256)
 
-DEFINE_CUB_WRAPPER(cub::DeviceRadixSort::SortKeys, CubRadixSort)
-DEFINE_CUB_WRAPPER(cub::DeviceSelect::Unique, CubUnique)
-DEFINE_CUB_WRAPPER(cub::DeviceScan::InclusiveSum, CubPrefixSum)
+// DEFINE_CUB_WRAPPER(cub::DeviceRadixSort::SortKeys, CubRadixSort)
+// DEFINE_CUB_WRAPPER(cub::DeviceSelect::Unique, CubUnique)
+// DEFINE_CUB_WRAPPER(cub::DeviceScan::InclusiveSum, CubPrefixSum)
 
 // ---------------------
 //        Benchmarks
@@ -74,12 +74,46 @@ public:
     std::generate_n(u_input, num_items,
                     [&] { return make_float3(dis(gen), dis(gen), dis(gen)); });
 
-    // I have to generate the input correctly so the Build radix tree can use it
-    TransformMortonSync(num_items, u_input, u_mortons, morton_encoder);
-    CubRadixSort(u_mortons, u_mortons_alt, num_items);
-    CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_items);
+    // I have to generate the input correctly so the Build radix tree can use
+    // it TransformMortonSync(num_items, u_input, u_mortons, morton_encoder);
+    // CubRadixSort(u_mortons, u_mortons_alt, num_items);
+    // CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_items);
 
+    constexpr auto num_threads = 256;
+    const auto num_blocks = (num_items + num_threads - 1) / num_threads;
+    convertMortonOnly_v2<<<num_blocks, num_threads>>>(
+        num_items, u_input, u_mortons, morton_encoder);
+    BENCH_CUDA_TRY(cudaDeviceSynchronize());
+
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    size_t last_temp_storage_bytes = 0;
+
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
+                                   u_mortons, u_mortons_alt, num_items);
+    BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
+                                   u_mortons, u_mortons_alt, num_items);
+
+    BENCH_CUDA_TRY(cudaDeviceSynchronize());
+
+    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons_alt,
+                              u_mortons, u_num_selected_out, num_items);
+
+    if (last_temp_storage_bytes < temp_storage_bytes) {
+      BENCH_CUDA_TRY(cudaFree(d_temp_storage));
+      BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+      last_temp_storage_bytes = temp_storage_bytes;
+    }
+
+    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
+                              u_mortons_alt, u_num_selected_out, num_items);
+
+    BENCH_CUDA_TRY(cudaDeviceSynchronize());
     num_unique = *u_num_selected_out;
+
+    BENCH_CUDA_TRY(cudaFree(d_temp_storage));
 
     // for (auto i = 0; i < 10; ++i) {
     //   std::cout << i << ":\t" << u_mortons[i] << '\n';
@@ -129,8 +163,16 @@ public:
         AllocateManaged<brt::InnerNodes>(SortedMortonFixture::num_unique);
 
     // Build Tree
-    BuildRadixTreeSync(SortedMortonFixture::num_unique, u_mortons,
-                       u_inner_nodes);
+    // BuildRadixTreeSync(SortedMortonFixture::num_unique, u_mortons,
+    //                    u_inner_nodes);
+    constexpr auto num_threads = 256;
+
+    const auto num_blocks =
+        (SortedMortonFixture::num_unique + num_threads - 1) / num_threads;
+    BuildRadixTreeKernel<<<num_blocks, num_threads>>>(
+        SortedMortonFixture::num_unique, u_mortons, u_inner_nodes);
+    BENCH_CUDA_TRY(cudaDeviceSynchronize());
+
     // std::cout << "brt_nodes:" << std::endl;
     // for (auto i = 0; i < 10; ++i) {
     //   std::cout << i << ":\t" << u_inner_nodes[i].left << ", "
@@ -154,6 +196,7 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_EdgeCount)(bm::State &st) {
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
 
+    constexpr auto num_threads = 256;
     const auto num_blocks = (num_brt_nodes + num_threads - 1) / num_threads;
     CalculateEdgeCountKernel<<<num_blocks, num_threads>>>(
         num_brt_nodes, u_edge_count, u_inner_nodes);
@@ -176,10 +219,28 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
   const auto u_oc_offset = AllocateManaged<int>(num_unique);
   const auto u_oc_nodes = AllocateManaged<oct::OctNode>(num_unique);
 
-  EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
+  constexpr auto num_threads_for_data_prep = 256;
+
+  // EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
+  const auto num_blocks = (num_brt_nodes + num_threads_for_data_prep - 1) /
+                          num_threads_for_data_prep;
+  CalculateEdgeCountKernel<<<num_blocks, num_threads_for_data_prep>>>(
+      num_brt_nodes, u_edge_count, u_inner_nodes);
+  BENCH_CUDA_TRY(cudaDeviceSynchronize());
+
   u_edge_count[0] = 1; // Root node counts as 1
 
-  CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
+  // CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
+                                u_edge_count, u_oc_offset + 1, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+  cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
+                                u_edge_count, u_oc_offset + 1, num_items);
+  BENCH_CUDA_TRY(cudaDeviceSynchronize());
+
   u_oc_offset[0] = 0;
 
   // std::cout << "edge_count (oc_offset):" << std::endl;
@@ -205,6 +266,8 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
         num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count, u_mortons,
         u_inner_nodes, morton_decoder, root_level);
   }
+
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
   BENCH_CUDA_TRY(cudaFree(u_edge_count));
   BENCH_CUDA_TRY(cudaFree(u_oc_offset));
   BENCH_CUDA_TRY(cudaFree(u_oc_nodes));
@@ -213,7 +276,6 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
 BENCHMARK_REGISTER_F(RadixTreeFixture, BM_MakeOctreeNodes)
     ->RangeMultiplier(2)
     ->Range(32, 1024)
-    ->Iterations(1) // It will crash the computer
     ->UseManualTime()
     ->Unit(bm::kMillisecond);
 
@@ -228,7 +290,6 @@ static void BM_ComputeMorton(bm::State &st) {
     const auto num_blocks = (num_items + num_threads - 1) / num_threads;
     convertMortonOnly_v2<<<num_blocks, num_threads>>>(num_items, u_input,
                                                       u_output, morton_encoder);
-    bm::DoNotOptimize(u_output);
   }
 
   BENCH_CUDA_TRY(cudaFree(u_input));
@@ -240,10 +301,21 @@ static void BM_RadixSort(bm::State &st) {
   const auto u_mortons = AllocateManaged<Code_t>(num_items);
   const auto u_mortons_alt = AllocateManaged<Code_t>(num_items);
 
+  // One time code to get the required temp storage size
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, u_mortons,
+                                 u_mortons_alt, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
-    CubRadixSort(u_mortons, u_mortons_alt, num_items);
+    // CubRadixSort(u_mortons, u_mortons_alt, num_items);
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
+                                   u_mortons, u_mortons_alt, num_items);
   }
+
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
   BENCH_CUDA_TRY(cudaFree(u_mortons));
   BENCH_CUDA_TRY(cudaFree(u_mortons_alt));
 }
@@ -254,10 +326,20 @@ static void BM_RemoveDuplicates(bm::State &st) {
   const auto u_mortons_alt = AllocateManaged<Code_t>(num_items);
   const auto u_num_selected_out = AllocateManaged<int>(1);
 
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
+                            u_mortons_alt, u_num_selected_out, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
-    CubUnique(u_mortons, u_mortons_alt, u_num_selected_out, num_items);
+    // CubUnique(u_mortons, u_mortons_alt, u_num_selected_out, num_items);
+    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
+                              u_mortons_alt, u_num_selected_out, num_items);
   }
+
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
   BENCH_CUDA_TRY(cudaFree(u_mortons));
   BENCH_CUDA_TRY(cudaFree(u_mortons_alt));
   BENCH_CUDA_TRY(cudaFree(u_num_selected_out));
@@ -268,10 +350,19 @@ static void BM_PrefixSum(bm::State &st) {
   const auto u_nums = AllocateManaged<int>(num_items);
   const auto u_sums = AllocateManaged<int>(num_items);
 
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
+                                u_sums, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
-    CubPrefixSum(u_nums, u_sums, num_items);
+    // CubPrefixSum(u_nums, u_sums, num_items);
+    cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
+                                  u_sums, num_items);
   }
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
   BENCH_CUDA_TRY(cudaFree(u_nums));
   BENCH_CUDA_TRY(cudaFree(u_sums));
 }
