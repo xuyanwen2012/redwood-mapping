@@ -14,23 +14,25 @@ struct MortonFunctor {
       : min_coord(min_coord), range(range) {}
 
   __host__ __device__ __forceinline__ Code_t
-  operator()(const Eigen::Vector3f& point) const {
+  operator()(const Eigen::Vector3f &point) const {
     return PointToCode(point.x(), point.y(), point.z(), min_coord, range);
   }
 
   float min_coord, range;
 };
 
-__global__ void ConvertMortonOnly(const Eigen::Vector3f* input, Code_t* output,
+__global__ void ConvertMortonOnly(const Eigen::Vector3f *input, Code_t *output,
                                   const int size, const MortonFunctor functor) {
   const auto i = threadIdx.x + blockIdx.x * blockDim.x;
-  if (i < size) output[i] = functor(input[i]);
+  if (i < size)
+    output[i] = functor(input[i]);
 }
 
 __global__ void Empty() {}
 
 void CudaWarmUp() {
-  for (auto i = 0; i < 5; ++i) Empty<<<1, 1>>>();
+  for (auto i = 0; i < 5; ++i)
+    Empty<<<1, 1>>>();
 }
 
 __device__ __host__ __forceinline__ int Sign(const int val) {
@@ -56,12 +58,12 @@ struct InnerNodes {
   int delta_node;
 
   // pointers
-  int left = -1;  // can be either inner or leaf
+  int left = -1; // can be either inner or leaf
   int right = -1;
   int parent = -1;
 };
 
-__device__ __forceinline__ int Delta(const Code_t* morton_keys, const int i,
+__device__ __forceinline__ int Delta(const Code_t *morton_keys, const int i,
                                      const int j) {
   constexpr auto unused_bits = 1;
   const auto li = morton_keys[i];
@@ -70,14 +72,14 @@ __device__ __forceinline__ int Delta(const Code_t* morton_keys, const int i,
 }
 
 __device__ __forceinline__ int DeltaSafe(const int key_num,
-                                         const Code_t* morton_keys, const int i,
+                                         const Code_t *morton_keys, const int i,
                                          const int j) {
   return (j < 0 || j >= key_num) ? -1 : Delta(morton_keys, i, j);
 }
 
-__device__ __forceinline__ void ProcessInternalNodesHelper(
-    const int key_num, const Code_t* morton_keys, const int i,
-    InnerNodes* brt_cuda_nodes) {
+__device__ __forceinline__ void
+ProcessInternalNodesHelper(const int key_num, const Code_t *morton_keys,
+                           const int i, InnerNodes *brt_cuda_nodes) {
   const auto direction{Sign(Delta(morton_keys, i, i + 1) -
                             DeltaSafe(key_num, morton_keys, i, i - 1))};
 
@@ -85,7 +87,7 @@ __device__ __forceinline__ void ProcessInternalNodesHelper(
 
   int I_max{2};
   while (DeltaSafe(key_num, morton_keys, i, i + I_max * direction) > delta_min)
-    I_max <<= 2;  // *= 2
+    I_max <<= 2; // *= 2
 
   // Find the other end using binary search.
   int I{0};
@@ -117,14 +119,16 @@ __device__ __forceinline__ void ProcessInternalNodesHelper(
   brt_cuda_nodes[i].left = left;
   brt_cuda_nodes[i].right = right;
 
-  if (min(i, j) != split) brt_cuda_nodes[left].parent = i;
-  if (max(i, j) != split + 1) brt_cuda_nodes[right].parent = i;
+  if (min(i, j) != split)
+    brt_cuda_nodes[left].parent = i;
+  if (max(i, j) != split + 1)
+    brt_cuda_nodes[right].parent = i;
 }
 
-}  // namespace brt_cuda
+} // namespace brt_cuda
 
-__global__ void BuildRadixTreeKernel(const Code_t* sorted_morton,
-                                     brt_cuda::InnerNodes* nodes,
+__global__ void BuildRadixTreeKernel(const Code_t *sorted_morton,
+                                     brt_cuda::InnerNodes *nodes,
                                      const size_t num_unique_keys) {
   const auto i = threadIdx.x + blockIdx.x * blockDim.x;
   const auto num_brt_nodes = num_unique_keys - 1;
@@ -132,7 +136,6 @@ __global__ void BuildRadixTreeKernel(const Code_t* sorted_morton,
     brt_cuda::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i,
                                          nodes);
   }
-
 }
 
 void PrintCudaDeviceInfo() {
@@ -193,7 +196,7 @@ int main() {
   std::cout << "Elapsed time: " << milliseconds << " ms" << std::endl;
 
   // Sort
-  void* d_temp_storage = nullptr;
+  void *d_temp_storage = nullptr;
   size_t temp_storage_bytes = 0;
   size_t last_temp_storage_bytes = 0;
 
