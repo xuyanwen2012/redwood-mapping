@@ -52,23 +52,15 @@ template <typename T> T *AllocateManaged(const size_t num_elements) {
     HANDLE_ERROR(cudaDeviceSynchronize());                                     \
   }
 
-struct CubTempStorage {
-  CubTempStorage() : d_temp_storage(nullptr), saved_temp_storage_bytes(0) {}
-
-  ~CubTempStorage() { cudaFree(d_temp_storage); }
-
-  void ReallocIfNecessary(const size_t new_size) {
-    if (saved_temp_storage_bytes < new_size) {
-      HANDLE_ERROR(cudaFree(d_temp_storage));
-      HANDLE_ERROR(cudaMalloc(&d_temp_storage, new_size));
-      saved_temp_storage_bytes = new_size;
-      std::cout << "saved_temp_storage_bytes:\t" << new_size << std::endl;
-    }
+#define DEFINE_CUB_WRAPPER(kernel, wrapper_name)                               \
+  template <typename... Args> void wrapper_name(Args... args) {                \
+    void *d_temp_storage = nullptr;                                            \
+    size_t temp_storage_bytes = 0;                                             \
+    kernel(d_temp_storage, temp_storage_bytes, args...);                       \
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);                           \
+    kernel(d_temp_storage, temp_storage_bytes, args...);                       \
+    HANDLE_ERROR(cudaDeviceSynchronize());                                     \
   }
-
-  void *d_temp_storage;
-  size_t saved_temp_storage_bytes;
-};
 
 // ---------------------
 //        Kernels
@@ -77,38 +69,17 @@ struct CubTempStorage {
 // Use these to generate a wrapper function for a GPU kernel
 DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
-DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, CalculateEdgeCountSync,
-                           256)
+DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, EdgeCountSync, 256)
 
-template <typename... Args>
-void CubRadixSort(CubTempStorage &storage, Args... args) {
-  size_t temp_storage_bytes = 0;
-  cub::DeviceRadixSort::SortKeys(storage.d_temp_storage, temp_storage_bytes,
-                                 args...);
-  std::cout << "--- bytes :\t" << temp_storage_bytes << std::endl;
-  storage.ReallocIfNecessary(temp_storage_bytes);
-  cub::DeviceRadixSort::SortKeys(storage.d_temp_storage, temp_storage_bytes,
-                                 args...);
-  HANDLE_ERROR(cudaDeviceSynchronize());
-}
-
-template <typename... Args>
-void CubUnique(CubTempStorage &storage, Args... args) {
-  size_t temp_storage_bytes = 0;
-  cub::DeviceSelect::Unique(storage.d_temp_storage, temp_storage_bytes,
-                            args...);
-  std::cout << "--- bytes :\t" << temp_storage_bytes << std::endl;
-  storage.ReallocIfNecessary(temp_storage_bytes);
-  cub::DeviceSelect::Unique(storage.d_temp_storage, temp_storage_bytes,
-                            args...);
-  HANDLE_ERROR(cudaDeviceSynchronize());
-}
+DEFINE_CUB_WRAPPER(cub::DeviceRadixSort::SortKeys, CubRadixSort);
+DEFINE_CUB_WRAPPER(cub::DeviceSelect::Unique, CubUnique);
+DEFINE_CUB_WRAPPER(cub::DeviceScan::InclusiveSum, CubPrefixSum);
 
 int main() {
-  // constexpr auto num_elements = 10'000'000;
-  constexpr auto num_elements = 1280 * 720;
 
   PrintCudaDeviceInfo();
+  // constexpr auto num_elements = 10'000'000;
+  constexpr auto num_elements = 1280 * 720;
 
   const auto u_input = AllocateManaged<float3>(num_elements);
   const auto u_mortons = AllocateManaged<Code_t>(num_elements);
@@ -130,58 +101,28 @@ int main() {
 
   GpuWarmUp();
 
-  void *d_temp_storage = nullptr;
-  size_t temp_storage_bytes = 0;
-  size_t saved_temp_storage_bytes = 0;
-
   TransformMortonSync(num_elements, u_input, u_mortons, morton_functor);
-
-  // CubTempStorage temp_storage{};
-  // CubRadixSort(temp_storage, u_mortons, u_mortons_alt, num_elements);
-  // CubUnique(temp_storage, u_mortons_alt, u_mortons, u_num_selected_out,
-  //           num_elements);
-
-  // Sort by morton codes
-  {
-    HANDLE_ERROR(cub::DeviceRadixSort::SortKeys(d_temp_storage,
-                                                temp_storage_bytes, u_mortons,
-                                                u_mortons_alt, num_elements));
-    HANDLE_ERROR(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-    HANDLE_ERROR(cub::DeviceRadixSort::SortKeys(d_temp_storage,
-                                                temp_storage_bytes, u_mortons,
-                                                u_mortons_alt, num_elements));
-    HANDLE_ERROR(cudaDeviceSynchronize());
-  }
-
-  // Unique morton codes
-  {
-    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons_alt,
-                              u_mortons, u_num_selected_out, num_elements);
-    if (saved_temp_storage_bytes < temp_storage_bytes) {
-      HANDLE_ERROR(cudaFree(d_temp_storage));
-      HANDLE_ERROR(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-      saved_temp_storage_bytes = temp_storage_bytes;
-    }
-    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons_alt,
-                              u_mortons, u_num_selected_out, num_elements);
-    HANDLE_ERROR(cudaDeviceSynchronize());
-  }
+  CubRadixSort(u_mortons, u_mortons_alt, num_elements);
+  CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_elements);
 
   const auto num_unique = *u_num_selected_out;
   const auto num_brt_nodes = num_unique - 1;
 
   BuildRadixTreeSync(num_brt_nodes, u_mortons_alt, u_inner_nodes);
-  CalculateEdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
+  EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
+  u_edge_count[0] = 1; // Root node counts as 1
+
+  CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
+  u_oc_offset[0] = 0;
+
+  const auto num_oc_nodes = u_oc_offset[num_brt_nodes];
+  std::cout << "num_oc_nodes:\t" << num_oc_nodes << std::endl;
 
   // Print out some stats
   std::cout << "num_unique:\t" << num_unique << std::endl;
-  std::cout << "mortons:" << std::endl;
+  std::cout << "sorted (unique):" << std::endl;
   for (auto i = 0; i < 10; ++i) {
-    std::cout << u_mortons[i] << std::endl;
-  }
-  std::cout << "sorted:" << std::endl;
-  for (auto i = 0; i < 10; ++i) {
-    std::cout << u_mortons_alt[i] << std::endl;
+    std::cout << i << ":\t" << u_mortons[i] << std::endl;
   }
   for (auto i = 0; i < 10; ++i) {
     std::cout << i << ":\t" << u_inner_nodes[i].left << ", "
@@ -192,6 +133,10 @@ int main() {
   for (auto i = 0; i < 10; ++i) {
     std::cout << i << ":\t" << u_edge_count[i] << std::endl;
   }
+  std::cout << "oc_offset:" << std::endl;
+  for (auto i = 0; i < 10; ++i) {
+    std::cout << i << ":\t" << u_oc_offset[i] << std::endl;
+  }
 
   cudaFree(u_input);
   cudaFree(u_mortons);
@@ -200,6 +145,5 @@ int main() {
   cudaFree(u_inner_nodes);
   cudaFree(u_edge_count);
   cudaFree(u_oc_offset);
-  // cudaFree(d_temp_storage);
   return 0;
 }
