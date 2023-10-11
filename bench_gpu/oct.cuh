@@ -60,6 +60,35 @@ struct OctNode {
   }
 };
 
+__host__ __device__ __forceinline__ bool IsLeaf(const int internal_value) {
+  // check the most significant bit, which is used as "is leaf node?"
+  return internal_value >> (sizeof(int) * 8 - 1);
+}
+
+__host__ __device__ __forceinline__ int GetLeafIndex(const int internal_value) {
+  // delete the last bit which tells if this is leaf or internal index
+  return internal_value & ~(1 << (sizeof(int) * 8 - 1));
+}
+
+inline void CheckTree(const Code_t prefix, const int code_len,
+                      const OctNode *nodes, const int oct_idx,
+                      const Code_t *codes) {
+  const auto &node = nodes[oct_idx];
+  for (int i = 0; i < 8; ++i) {
+    Code_t new_pref = (prefix << 3) | i;
+    if (node.child_node_mask & (1 << i)) {
+      CheckTree(new_pref, code_len + 3, nodes, node.children[i], codes);
+    }
+    if (node.child_leaf_mask & (1 << i)) {
+      Code_t leaf_prefix =
+          codes[node.children[i]] >> (kCodeLen - (code_len + 3));
+      if (new_pref != leaf_prefix) {
+        printf("oh no...\n");
+      }
+    }
+  }
+}
+
 // --------------------------------------------------
 //         Helpers (per data operations)
 // --------------------------------------------------
@@ -119,6 +148,52 @@ MakeNodesHelper(const int i, OctNode *nodes, const int *node_offsets,
   }
 }
 
+__device__ __forceinline__ void LinkNodesHelper(const int i, OctNode *nodes,
+                                                const int *node_offsets,
+                                                const int *edge_count,
+                                                const Code_t *morton_keys,
+                                                const brt::InnerNodes *inners) {
+  if (IsLeaf(inners[i].left)) {
+    const int leaf_idx = GetLeafIndex(inners[i].left);
+    const int leaf_level = inners[i].delta_node / 3 + 1;
+    const Code_t leaf_prefix =
+        morton_keys[leaf_idx] >> (kCodeLen - (3 * leaf_level));
+
+    const int child_idx = static_cast<int>(leaf_prefix & 0b111);
+    // walk up the radix tree until finding a node which contributes an octnode
+    int rt_node = i;
+    while (edge_count[rt_node] == 0) {
+      rt_node = inners[rt_node].parent;
+    }
+
+    // the lowest octnode in the string contributed by rt_node will
+    // be the lowest index
+    const int bottom_oct_idx = node_offsets[rt_node];
+    nodes[bottom_oct_idx].SetLeaf(leaf_idx, child_idx);
+  }
+
+  if (IsLeaf(inners[i].right)) {
+    const int leaf_idx = GetLeafIndex(inners[i].left) + 1;
+    const int leaf_level = inners[i].delta_node / 3 + 1;
+    const Code_t leaf_prefix =
+        morton_keys[leaf_idx] >> (kCodeLen - (3 * leaf_level));
+
+    const int child_idx = static_cast<int>(leaf_prefix & 0b111);
+
+    // walk up the radix tree until finding a node which contributes
+    // an octnode
+    int rt_node = i;
+    while (edge_count[rt_node] == 0) {
+      rt_node = inners[rt_node].parent;
+    }
+
+    // the lowest octnode in the string contributed by rt_node will
+    // be the lowest index
+    const int bottom_oct_idx = node_offsets[rt_node];
+    nodes[bottom_oct_idx].SetLeaf(leaf_idx, child_idx);
+  }
+}
+
 } // namespace oct
 
 // --------------------------------------------------
@@ -144,5 +219,16 @@ __global__ void MakeNodesKernel(const size_t num_brt_nodes, oct::OctNode *nodes,
   if (i < num_brt_nodes) {
     oct::MakeNodesHelper(i, nodes, node_offsets, edge_count, morton_keys,
                          inners, morton_decoder, root_level);
+  }
+}
+
+__global__ void LinkNodesKernel(const size_t num_brt_nodes, oct::OctNode *nodes,
+                                const int *node_offsets, const int *edge_count,
+                                const Code_t *morton_keys,
+                                const brt::InnerNodes *inners) {
+  const auto i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < num_brt_nodes) {
+    oct::LinkNodesHelper(i, nodes, node_offsets, edge_count, morton_keys,
+                         inners);
   }
 }

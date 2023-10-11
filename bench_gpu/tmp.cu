@@ -1,53 +1,13 @@
 #include <algorithm>
+#include <bitset>
 #include <cub/cub.cuh>
-#include <iostream>
 #include <random>
 
 #include "brt.cuh"
+#include "cpu_timer.hpp"
+#include "cuda_utils.cuh"
 #include "morton.cuh"
 #include "oct.cuh"
-
-#define HANDLE_ERROR(err) (HandleCudaError(err, __FILE__, __LINE__))
-
-inline void HandleCudaError(const cudaError_t err, const char *file,
-                            const int line) {
-  if (err != cudaSuccess) {
-    const auto _ = fprintf(stderr, "CUDA Error: %s in %s at line %d\n",
-                           cudaGetErrorString(err), file, line);
-    exit(EXIT_FAILURE);
-  }
-}
-__global__ void EmptyKernel() {}
-
-void GpuWarmUp() {
-  EmptyKernel<<<1, 1>>>();
-  HANDLE_ERROR(cudaDeviceSynchronize());
-}
-
-void PrintCudaDeviceInfo() {
-  int device_count;
-  HANDLE_ERROR(cudaGetDeviceCount(&device_count));
-
-  for (int device = 0; device < device_count; ++device) {
-    cudaDeviceProp device_prop;
-    cudaGetDeviceProperties(&device_prop, device);
-
-    std::cout << "Device " << device << ": " << device_prop.name << std::endl;
-    std::cout << "Compute Capability (SM version): " << device_prop.major << "."
-              << device_prop.minor << std::endl;
-  }
-}
-
-template <typename T> T *AllocateManaged(const size_t num_elements) {
-  T *ptr;
-  HANDLE_ERROR(cudaMallocManaged(&ptr, num_elements * sizeof(T)));
-  return ptr;
-}
-
-std::ostream &operator<<(std::ostream &os, const float3 &p) {
-  os << "(" << p.x << ", " << p.y << ", " << p.z << ")";
-  return os;
-}
 
 #define DEFINE_SYNC_KERNEL_WRAPPER(kernel_name, function_name, num_threads)    \
   template <typename... Args>                                                  \
@@ -71,21 +31,20 @@ std::ostream &operator<<(std::ostream &os, const float3 &p) {
 //        Kernels
 // ---------------------
 
-// Use these to generate a wrapper function for a GPU kernel
 DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, EdgeCountSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(MakeNodesKernel, MakeOctreeNodesSync, 256)
+DEFINE_SYNC_KERNEL_WRAPPER(LinkNodesKernel, LinkNodesSync, 256)
 
 DEFINE_CUB_WRAPPER(cub::DeviceRadixSort::SortKeys, CubRadixSort);
 DEFINE_CUB_WRAPPER(cub::DeviceSelect::Unique, CubUnique);
 DEFINE_CUB_WRAPPER(cub::DeviceScan::InclusiveSum, CubPrefixSum);
 
 int main() {
-
   PrintCudaDeviceInfo();
-  // constexpr auto num_elements = 10'000'000;
-  constexpr auto num_elements = 1280 * 720;
+  constexpr auto num_elements = 10'000'000;
+  // constexpr auto num_elements = 1280 * 720;
 
   const auto u_input = AllocateManaged<float3>(num_elements);
   const auto u_mortons = AllocateManaged<Code_t>(num_elements);
@@ -110,57 +69,85 @@ int main() {
 
   GpuWarmUp();
 
-  TransformMortonSync(num_elements, u_input, u_mortons, morton_encoder);
-  CubRadixSort(u_mortons, u_mortons_alt, num_elements);
-  CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_elements);
+  TimeTask("Morton encoding", [&] {
+    TransformMortonSync(num_elements, u_input, u_mortons, morton_encoder);
+  });
+
+  TimeTask("CUB radix sort",
+           [&] { CubRadixSort(u_mortons, u_mortons_alt, num_elements); });
+
+  TimeTask("CUB unique", [&] {
+    CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_elements);
+  });
 
   const auto num_unique = *u_num_selected_out;
   const auto num_brt_nodes = num_unique - 1;
 
-  BuildRadixTreeSync(num_brt_nodes, u_mortons_alt, u_inner_nodes);
-  EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
-  u_edge_count[0] = 1; // Root node counts as 1
+  TimeTask("Build radix tree", [&] {
+    BuildRadixTreeSync(num_brt_nodes, u_mortons_alt, u_inner_nodes);
+  });
 
-  CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
-  u_oc_offset[0] = 0;
+  TimeTask("Calculate edge count", [&] {
+    EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
+    u_edge_count[0] = 1; // Root node counts as 1
+  });
+
+  TimeTask("Prefix sum", [&] {
+    CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
+    u_oc_offset[0] = 0;
+  });
 
   const auto num_oc_nodes = u_oc_offset[num_brt_nodes];
-
   const auto root_level = u_inner_nodes[0].delta_node / 3;
   Code_t root_prefix = u_mortons[0] >> (kCodeLen - (root_level * 3));
 
-  u_oc_nodes[0].cornor =
-      morton_decoder(root_prefix << (kCodeLen - (root_level * 3)));
-  u_oc_nodes[0].cell_size = range;
+  TimeTask("Make octree nodes", [&] {
+    u_oc_nodes[0].cornor =
+        morton_decoder(root_prefix << (kCodeLen - (root_level * 3)));
+    u_oc_nodes[0].cell_size = range;
+    MakeOctreeNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
+                        u_mortons, u_inner_nodes, morton_decoder, root_level);
+  });
 
-  MakeOctreeNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
-                      u_mortons, u_inner_nodes, morton_decoder, root_level);
+  TimeTask("Link nodes", [&] {
+    LinkNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
+                  u_mortons, u_inner_nodes);
+  });
 
   // Print out some stats
+
   std::cout << "num_unique:\t" << num_unique << std::endl;
   std::cout << "num_oc_nodes:\t" << num_oc_nodes << std::endl;
   std::cout << "sorted (unique):" << std::endl;
-  for (auto i = 0; i < 10; ++i) {
-    std::cout << i << ":\t" << u_mortons[i] << std::endl;
+  constexpr auto num_to_peek = 10;
+
+  for (auto i = 0; i < num_to_peek; ++i) {
+    std::cout << i << ":\t" << u_mortons[i] << "\t"
+              << morton_decoder(u_mortons[i]) << std::endl;
   }
-  for (auto i = 0; i < 10; ++i) {
+
+  std::cout << "brt_nodes:" << std::endl;
+  for (auto i = 0; i < num_to_peek; ++i) {
     std::cout << i << ":\t" << u_inner_nodes[i].left << ", "
               << u_inner_nodes[i].right << "\t(" << u_inner_nodes[i].delta_node
               << ")" << std::endl;
   }
-  std::cout << "edge_count:" << std::endl;
-  for (auto i = 0; i < 10; ++i) {
-    std::cout << i << ":\t" << u_edge_count[i] << std::endl;
+
+  std::cout << "edge_count (oc_offset):" << std::endl;
+  for (auto i = 0; i < num_to_peek; ++i) {
+    std::cout << i << ":\t" << u_edge_count[i] << "\t(" << u_oc_offset[i] << ')'
+              << std::endl;
   }
-  std::cout << "oc_offset:" << std::endl;
-  for (auto i = 0; i < 10; ++i) {
-    std::cout << i << ":\t" << u_oc_offset[i] << std::endl;
-  }
+
   std::cout << "oc_nodes:" << std::endl;
-  for (auto i = 0; i < 10; ++i) {
+  for (auto i = 0; i < num_to_peek; ++i) {
     std::cout << i << ":\t" << u_oc_nodes[i].cornor << ", "
-              << u_oc_nodes[i].cell_size << std::endl;
+              << u_oc_nodes[i].cell_size << ", "
+              << std::bitset<8>(u_oc_nodes[i].child_node_mask) << ", "
+              << std::bitset<8>(u_oc_nodes[i].child_leaf_mask) << std::endl;
   }
+
+  CheckTree(root_prefix, root_level * 3, u_oc_nodes, 0, u_mortons);
 
   cudaFree(u_input);
   cudaFree(u_mortons);
