@@ -52,15 +52,15 @@ template <typename T> T *AllocateManaged(const size_t num_elements) {
     HANDLE_ERROR(cudaDeviceSynchronize());                                     \
   }
 
+// ---------------------
+//        Kernels
+// ---------------------
+
 // Use these to generate a wrapper function for a GPU kernel
 DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
 DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, CalculateEdgeCountSync,
                            256)
-
-// ---------------------
-//        Kernels
-// ---------------------
 
 int main() {
   constexpr auto num_elements = 10'000'000;
@@ -92,9 +92,7 @@ int main() {
   GpuWarmUp();
 
   TransformMortonSync(num_elements, u_input, u_mortons, morton_functor);
-  // FooWrapper(num_elements, u_input, u_mortons, morton_functor);
 
-  // print 10
   std::cout << "mortons:" << std::endl;
   for (auto i = 0; i < 10; ++i) {
     std::cout << u_mortons[i] << std::endl;

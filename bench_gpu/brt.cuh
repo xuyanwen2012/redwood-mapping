@@ -100,14 +100,3 @@ __global__ void BuildRadixTreeKernel(const size_t num_brt_nodes,
     brt::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i, nodes);
   }
 }
-
-// __global__ void BuildRadixTreeKernel(const Code_t *sorted_morton,
-//                                      brt::InnerNodes *nodes,
-//                                      const size_t num_unique_keys) {
-//   const auto i = threadIdx.x + blockIdx.x * blockDim.x;
-//   const auto num_brt_nodes = num_unique_keys - 1;
-//   if (i < num_brt_nodes) {
-//     brt::ProcessInternalNodesHelper(num_unique_keys, sorted_morton, i,
-//     nodes);
-//   }
-// }

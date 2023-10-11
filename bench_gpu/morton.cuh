@@ -48,17 +48,9 @@ struct Morton {
 };
 
 __global__ void convertMortonOnly_v2(const size_t size, const float3 *input,
-                                     Code_t *output, Morton functor) {
+                                     Code_t *output, const Morton functor) {
   const auto tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid < size) {
     output[tid] = functor(input[tid]);
   }
 }
-
-// __global__ void convertMortonOnly_v2(const float3 *input, Code_t *output,
-//                                      const int size, Morton functor) {
-//   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-//   if (tid < size) {
-//     output[tid] = functor(input[tid]);
-//   }
-// }

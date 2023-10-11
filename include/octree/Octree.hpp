@@ -27,10 +27,10 @@ _NODISCARD inline int GetLeafIndex(const int internal_value) noexcept {
   return internal_value & ~(1 << (sizeof(int) * 8 - 1));
 }
 
-inline void MakeNodesHelper(const int i, oct::OctNode* nodes,
-                            const int* node_offsets, const int* edge_count,
-                            const Code_t* morton_keys,
-                            const brt::InnerNodes* inners,
+inline void MakeNodesHelper(const int i, oct::OctNode *nodes,
+                            const int *node_offsets, const int *edge_count,
+                            const Code_t *morton_keys,
+                            const brt::InnerNodes *inners,
                             const float min_coord, const float tree_range,
                             const int root_level) {
   int oct_idx = node_offsets[i];
@@ -79,10 +79,10 @@ inline void MakeNodesHelper(const int i, oct::OctNode* nodes,
   }
 }
 
-inline void LinkNodesHelper(const int i, oct::OctNode* nodes,
-                            const int* node_offsets, const int* edge_count,
-                            const Code_t* morton_keys,
-                            const brt::InnerNodes* inners) {
+inline void LinkNodesHelper(const int i, oct::OctNode *nodes,
+                            const int *node_offsets, const int *edge_count,
+                            const Code_t *morton_keys,
+                            const brt::InnerNodes *inners) {
   if (IsLeaf(inners[i].left)) {
     const int leaf_idx = GetLeafIndex(inners[i].left);
     const int leaf_level = inners[i].delta_node / 3 + 1;
@@ -125,9 +125,9 @@ inline void LinkNodesHelper(const int i, oct::OctNode* nodes,
 }
 
 inline void CheckTree(const Code_t prefix, const int code_len,
-                      const oct::OctNode* nodes, const int oct_idx,
-                      const Code_t* codes) {
-  const auto& node = nodes[oct_idx];
+                      const oct::OctNode *nodes, const int oct_idx,
+                      const Code_t *codes) {
+  const auto &node = nodes[oct_idx];
   for (int i = 0; i < 8; ++i) {
     Code_t new_pref = (prefix << 3) | i;
     if (node.child_node_mask & (1 << i)) {
