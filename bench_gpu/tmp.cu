@@ -44,6 +44,11 @@ template <typename T> T *AllocateManaged(const size_t num_elements) {
   return ptr;
 }
 
+std::ostream &operator<<(std::ostream &os, const float3 &p) {
+  os << "(" << p.x << ", " << p.y << ", " << p.z << ")";
+  return os;
+}
+
 #define DEFINE_SYNC_KERNEL_WRAPPER(kernel_name, function_name, num_threads)    \
   template <typename... Args>                                                  \
   void function_name(const size_t num_items, Args... args) {                   \
@@ -88,12 +93,15 @@ int main() {
   const auto u_inner_nodes = AllocateManaged<brt::InnerNodes>(num_elements);
   const auto u_edge_count = AllocateManaged<int>(num_elements);
   const auto u_oc_offset = AllocateManaged<int>(num_elements);
+  const auto u_oc_nodes =
+      AllocateManaged<oct::OctNode>(num_elements); // could be less
 
   // init random inputs
   constexpr auto min_coord = 0.0f;
   constexpr auto max_coord = 1024.0f;
   constexpr auto range = max_coord - min_coord;
-  constexpr auto morton_functor = Morton(min_coord, range);
+  constexpr auto morton_encoder = MortonEncoder(min_coord, range);
+  constexpr auto morton_decoder = MortonDecoder(min_coord, range);
   thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
   static std::uniform_real_distribution dis(min_coord, range); // <float>
   std::generate_n(u_input, num_elements,
@@ -101,7 +109,7 @@ int main() {
 
   GpuWarmUp();
 
-  TransformMortonSync(num_elements, u_input, u_mortons, morton_functor);
+  TransformMortonSync(num_elements, u_input, u_mortons, morton_encoder);
   CubRadixSort(u_mortons, u_mortons_alt, num_elements);
   CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_elements);
 
@@ -116,10 +124,17 @@ int main() {
   u_oc_offset[0] = 0;
 
   const auto num_oc_nodes = u_oc_offset[num_brt_nodes];
-  std::cout << "num_oc_nodes:\t" << num_oc_nodes << std::endl;
+
+  const auto root_level = u_inner_nodes[0].delta_node / 3;
+  Code_t root_prefix = u_mortons[0] >> (kCodeLen - (root_level * 3));
+
+  u_oc_nodes[0].cornor =
+      morton_decoder(root_prefix << (kCodeLen - (root_level * 3)));
+  u_oc_nodes[0].cell_size = range;
 
   // Print out some stats
   std::cout << "num_unique:\t" << num_unique << std::endl;
+  std::cout << "num_oc_nodes:\t" << num_oc_nodes << std::endl;
   std::cout << "sorted (unique):" << std::endl;
   for (auto i = 0; i < 10; ++i) {
     std::cout << i << ":\t" << u_mortons[i] << std::endl;
@@ -137,6 +152,11 @@ int main() {
   for (auto i = 0; i < 10; ++i) {
     std::cout << i << ":\t" << u_oc_offset[i] << std::endl;
   }
+  std::cout << "oc_nodes:" << std::endl;
+  for (auto i = 0; i < 10; ++i) {
+    std::cout << i << ":\t" << u_oc_nodes[i].cornor << ", "
+              << u_oc_nodes[i].cell_size << std::endl;
+  }
 
   cudaFree(u_input);
   cudaFree(u_mortons);
@@ -145,5 +165,6 @@ int main() {
   cudaFree(u_inner_nodes);
   cudaFree(u_edge_count);
   cudaFree(u_oc_offset);
+  cudaFree(u_oc_nodes);
   return 0;
 }

@@ -32,8 +32,8 @@ _NODISCARD H_D_I constexpr uint32_t CompressBits64(const uint64_t m) noexcept {
   return static_cast<uint32_t>(x);
 }
 
-H_D_I constexpr void Decode64(const uint64_t m, uint32_t& x, uint32_t& y,
-                              uint32_t& z) noexcept {
+H_D_I constexpr void Decode64(const uint64_t m, uint32_t &x, uint32_t &y,
+                              uint32_t &z) noexcept {
   x = CompressBits64(m);
   y = CompressBits64(m >> 1);
   z = CompressBits64(m >> 2);
@@ -63,8 +63,8 @@ _NODISCARD H_D_I constexpr Code_t PointToCode(const float x, const float y,
   return Encode64(x_coord, y_coord, z_coord);
 }
 
-H_D_I constexpr void CodeToPoint(const Code_t code, float& dec_x, float& dec_y,
-                                 float& dec_z, const float min_coord,
+H_D_I constexpr void CodeToPoint(const Code_t code, float &dec_x, float &dec_y,
+                                 float &dec_z, const float min_coord,
                                  const float range) noexcept {
   constexpr uint32_t bit_scale = 0xFFFFFFFFu >> (32 - (kCodeLen / 3));
   uint32_t dec_raw_x = 0, dec_raw_y = 0, dec_raw_z = 0;
