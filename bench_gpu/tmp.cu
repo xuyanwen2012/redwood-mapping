@@ -5,7 +5,7 @@
 
 #include "brt.cuh"
 #include "morton.cuh"
-//#include "oct.cuh"
+#include "oct.cuh"
 
 #define HANDLE_ERROR(err) (HandleCudaError(err, __FILE__, __LINE__))
 
@@ -44,10 +44,28 @@ template <typename T> T *AllocateManaged(const size_t num_elements) {
   return ptr;
 }
 
+#define DEFINE_SYNC_KERNEL_WRAPPER(kernel_name, function_name, num_threads)    \
+  template <typename... Args>                                                  \
+  void function_name(const int num_items, Args... args) {                      \
+    const auto num_blocks = (num_items + num_threads - 1) / num_threads;       \
+    kernel_name<<<num_blocks, num_threads>>>(args...);                         \
+    HANDLE_ERROR(cudaDeviceSynchronize());                                     \
+  }
+
+// Use these to generate a wrapper function for a GPU kernel
+DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
+DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
+DEFINE_SYNC_KERNEL_WRAPPER(oct::CalculateEdgeCountKernel,
+                           CalculateEdgeCountSync, 256)
+
+// ---------------------
+//        Kernels
+// ---------------------
+
 int main() {
   constexpr auto num_elements = 10'000'000;
   //   constexpr auto num_elements = 1280 * 720;
-  constexpr auto num_threads = 256;
+  // constexpr auto num_threads = 256;
 
   PrintCudaDeviceInfo();
 
@@ -73,14 +91,8 @@ int main() {
 
   GpuWarmUp();
 
-  // Transform to morton codes
-  {
-    const auto num_blocks = (num_elements + num_threads - 1) / num_threads;
-    std::cout << "num_blocks:\t" << num_blocks << std::endl;
-    convertMortonOnly_v2<<<num_blocks, num_threads>>>(
-        u_input, u_mortons, num_elements, morton_functor);
-    HANDLE_ERROR(cudaDeviceSynchronize());
-  }
+  TransformMortonSync(num_elements, u_input, u_mortons, num_elements,
+                      morton_functor);
 
   // print 10
   std::cout << "mortons:" << std::endl;
@@ -136,18 +148,24 @@ int main() {
   }
 
   // Build Radix Tree
-  {
-    const auto num_blocks = (num_unique + num_threads - 1) / num_threads;
-    BuildRadixTreeKernel<<<num_blocks, num_threads>>>(u_mortons, u_inner_nodes,
-                                                      num_threads);
-    HANDLE_ERROR(cudaDeviceSynchronize());
-  }
+  const auto num_brt_nodes = num_unique - 1;
+  BuildRadixTreeSync(num_brt_nodes, u_mortons_alt, u_inner_nodes,
+                     num_brt_nodes);
 
   // Print out some brt nodes
   for (auto i = 0; i < 10; ++i) {
     std::cout << i << ":\t" << u_inner_nodes[i].left << ", "
               << u_inner_nodes[i].right << "\t(" << u_inner_nodes[i].delta_node
               << ")" << std::endl;
+  }
+
+  CalculateEdgeCountSync(num_brt_nodes, num_brt_nodes, u_edge_count,
+                         u_inner_nodes);
+
+  // Print out some edge counts
+  std::cout << "edge_count:" << std::endl;
+  for (auto i = 0; i < 10; ++i) {
+    std::cout << i << ":\t" << u_edge_count[i] << std::endl;
   }
 
   cudaFree(u_input);
