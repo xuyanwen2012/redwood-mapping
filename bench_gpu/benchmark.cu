@@ -74,11 +74,6 @@ public:
     std::generate_n(u_input, num_items,
                     [&] { return make_float3(dis(gen), dis(gen), dis(gen)); });
 
-    // I have to generate the input correctly so the Build radix tree can use
-    // it TransformMortonSync(num_items, u_input, u_mortons, morton_encoder);
-    // CubRadixSort(u_mortons, u_mortons_alt, num_items);
-    // CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_items);
-
     constexpr auto num_threads = 256;
     const auto num_blocks = (num_items + num_threads - 1) / num_threads;
     convertMortonOnly_v2<<<num_blocks, num_threads>>>(
@@ -149,12 +144,6 @@ BENCHMARK_DEFINE_F(SortedMortonFixture, BM_BuildRadixTree)(bm::State &st) {
   BENCH_CUDA_TRY(cudaFree(u_inner_nodes));
 }
 
-BENCHMARK_REGISTER_F(SortedMortonFixture, BM_BuildRadixTree)
-    ->RangeMultiplier(2)
-    ->Range(32, 1024)
-    ->UseManualTime()
-    ->Unit(bm::kMillisecond);
-
 class RadixTreeFixture : public SortedMortonFixture {
 public:
   void SetUp(const bm::State &st) override {
@@ -203,12 +192,6 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_EdgeCount)(bm::State &st) {
   }
   BENCH_CUDA_TRY(cudaFree(u_edge_count));
 }
-
-BENCHMARK_REGISTER_F(RadixTreeFixture, BM_EdgeCount)
-    ->RangeMultiplier(2)
-    ->Range(32, 1024)
-    ->UseManualTime()
-    ->Unit(bm::kMillisecond);
 
 BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
   const auto num_threads = st.range(0);
@@ -273,12 +256,6 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
   BENCH_CUDA_TRY(cudaFree(u_oc_nodes));
 }
 
-BENCHMARK_REGISTER_F(RadixTreeFixture, BM_MakeOctreeNodes)
-    ->RangeMultiplier(2)
-    ->Range(32, 1024)
-    ->UseManualTime()
-    ->Unit(bm::kMillisecond);
-
 static void BM_ComputeMorton(bm::State &st) {
   constexpr auto num_items = 10'000'000;
   const auto num_threads = st.range(0);
@@ -310,7 +287,6 @@ static void BM_RadixSort(bm::State &st) {
 
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
-    // CubRadixSort(u_mortons, u_mortons_alt, num_items);
     cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
                                    u_mortons, u_mortons_alt, num_items);
   }
@@ -334,7 +310,6 @@ static void BM_RemoveDuplicates(bm::State &st) {
 
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
-    // CubUnique(u_mortons, u_mortons_alt, u_num_selected_out, num_items);
     cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
                               u_mortons_alt, u_num_selected_out, num_items);
   }
@@ -358,7 +333,6 @@ static void BM_PrefixSum(bm::State &st) {
 
   for (auto _ : st) {
     cuda_event_timer raii{st, true};
-    // CubPrefixSum(u_nums, u_sums, num_items);
     cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
                                   u_sums, num_items);
   }
@@ -385,9 +359,27 @@ BENCHMARK(BM_RemoveDuplicates)
     ->UseManualTime()
     ->Unit(bm::kMillisecond);
 
+BENCHMARK_REGISTER_F(SortedMortonFixture, BM_BuildRadixTree)
+    ->RangeMultiplier(2)
+    ->Range(32, 1024)
+    ->UseManualTime()
+    ->Unit(bm::kMillisecond);
+
+BENCHMARK_REGISTER_F(RadixTreeFixture, BM_EdgeCount)
+    ->RangeMultiplier(2)
+    ->Range(32, 1024)
+    ->UseManualTime()
+    ->Unit(bm::kMillisecond);
+
 BENCHMARK(BM_PrefixSum)
     ->Args({1280 * 720})
     ->Args({10'000'000})
+    ->UseManualTime()
+    ->Unit(bm::kMillisecond);
+
+BENCHMARK_REGISTER_F(RadixTreeFixture, BM_MakeOctreeNodes)
+    ->RangeMultiplier(2)
+    ->Range(32, 1024)
     ->UseManualTime()
     ->Unit(bm::kMillisecond);
 

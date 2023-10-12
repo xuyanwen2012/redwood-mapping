@@ -15,18 +15,18 @@
 namespace bm = benchmark;
 
 static int RandomIntInRange(const int min, const int max) {
-  static thread_local std::mt19937 gen(114514);  // NOLINT(cert-msc51-cpp)
+  static thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
   static std::uniform_int_distribution<int> dis(min, max);
   return dis(gen);
 }
 
 static float RandomFloatInRange(const float min, const float max) {
-  static thread_local std::mt19937 gen(114514);  // NOLINT(cert-msc51-cpp)
+  static thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
   static std::uniform_real_distribution<float> dis(min, max);
   return dis(gen);
 }
 
-static void BM_STD_PartialSum(bm::State& state) {
+static void BM_STD_PartialSum(bm::State &state) {
   std::vector<int> edge_count(state.range(0), 1);
   std::vector<int> oc_node_offsets(state.range(0) + 1);
 
@@ -39,8 +39,8 @@ static void BM_STD_PartialSum(bm::State& state) {
 }
 
 template <typename execution_policy_t>
-static void BM_STD_InclusiveScan(bm::State& state,
-                                 execution_policy_t&& policy) {
+static void BM_STD_InclusiveScan(bm::State &state,
+                                 execution_policy_t &&policy) {
   const auto count = static_cast<size_t>(state.range(0));
 
   std::vector<int> edge_count(count, 1);
@@ -59,8 +59,8 @@ struct float3 {
 };
 
 class MyFixture : public bm::Fixture {
- public:
-  void SetUp(bm::State& state) {
+public:
+  void SetUp(bm::State &state) {
     const auto input_size = state.range(0);
 
     std::vector<float3> u_inputs(input_size);
@@ -75,7 +75,7 @@ class MyFixture : public bm::Fixture {
 
     // Parrallel
     std::transform(std::execution::par, u_inputs.begin(), u_inputs.end(),
-                   u_sorted_morton_keys.begin(), [&](const auto& input) {
+                   u_sorted_morton_keys.begin(), [&](const auto &input) {
                      return PointToCode(input.x, input.y, input.z, 0.0f,
                                         1024.0f);
                    });
@@ -102,7 +102,7 @@ class MyFixture : public bm::Fixture {
   std::vector<brt::InnerNodes> u_brt_nodes;
 };
 
-static void BM_CountEdges(benchmark::State& state, MyFixture& fixture) {
+static void BM_CountEdges(benchmark::State &state, MyFixture &fixture) {
   std::vector<int> edge_count(state.range(0));
 
   for (auto _ : state) {
@@ -115,7 +115,7 @@ static void BM_CountEdges(benchmark::State& state, MyFixture& fixture) {
 }
 
 // Register the benchmark with the fixture.
-BENCHMARK_DEFINE_F(MyFixture, BM_CountEdges)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(MyFixture, BM_CountEdges)(benchmark::State &state) {
   BM_CountEdges(state, *this);
 }
 
