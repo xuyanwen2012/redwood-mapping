@@ -13,51 +13,79 @@
 
 namespace bm = benchmark;
 
-// namespace {
-
-// #define DEFINE_SYNC_KERNEL_WRAPPER(kernel_name, function_name, num_threads)    \
-//   template <typename... Args>                                                  \
-//   void function_name(const size_t num_items, Args... args) {                   \
-//     const auto num_blocks = (num_items + num_threads - 1) / num_threads;       \
-//     kernel_name<<<num_blocks, num_threads>>>(num_items, args...);              \
-//     BENCH_CUDA_TRY(cudaDeviceSynchronize());                                   \
-//   }
-
-// #define DEFINE_CUB_WRAPPER(kernel, wrapper_name)                               \
-//   template <typename... Args> void wrapper_name(Args... args) {                \
-//     void *d_temp_storage = nullptr;                                            \
-//     size_t temp_storage_bytes = 0;                                             \
-//     kernel(d_temp_storage, temp_storage_bytes, args...);                       \
-//     cudaMalloc(&d_temp_storage, temp_storage_bytes);                           \
-//     kernel(d_temp_storage, temp_storage_bytes, args...);                       \
-//     BENCH_CUDA_TRY(cudaDeviceSynchronize());                                   \
-//   }
-
-// } // namespace
-
-// ---------------------
-//        Kernels
-// ---------------------
-
-// DEFINE_SYNC_KERNEL_WRAPPER(convertMortonOnly_v2, TransformMortonSync, 256)
-// DEFINE_SYNC_KERNEL_WRAPPER(BuildRadixTreeKernel, BuildRadixTreeSync, 256)
-// DEFINE_SYNC_KERNEL_WRAPPER(CalculateEdgeCountKernel, EdgeCountSync, 256)
-// DEFINE_SYNC_KERNEL_WRAPPER(MakeNodesKernel, MakeOctreeNodesSync, 256)
-// DEFINE_SYNC_KERNEL_WRAPPER(LinkNodesKernel, LinkNodesSync, 256)
-
-// DEFINE_CUB_WRAPPER(cub::DeviceRadixSort::SortKeys, CubRadixSort)
-// DEFINE_CUB_WRAPPER(cub::DeviceSelect::Unique, CubUnique)
-// DEFINE_CUB_WRAPPER(cub::DeviceScan::InclusiveSum, CubPrefixSum)
-
-// ---------------------
-//        Benchmarks
-// ---------------------
-
 constexpr float min_coord = 0.0f;
 constexpr float max_coord = 1024.0f;
 constexpr float range = max_coord - min_coord;
 constexpr auto morton_encoder = MortonEncoder(min_coord, range);
 constexpr auto morton_decoder = MortonDecoder(min_coord, range);
+
+// ---------------------
+//        Benchmarks
+// ---------------------
+
+static void BM_ComputeMorton(bm::State &st) {
+  constexpr auto num_items = 10'000'000;
+  const auto num_threads = st.range(0);
+  const auto u_input = AllocateManaged<float3>(num_items);
+  const auto u_output = AllocateManaged<Code_t>(num_items);
+
+  for (auto _ : st) {
+    cuda_event_timer raii{st, true};
+    const auto num_blocks = (num_items + num_threads - 1) / num_threads;
+    convertMortonOnly_v2<<<num_blocks, num_threads>>>(num_items, u_input,
+                                                      u_output, morton_encoder);
+  }
+
+  BENCH_CUDA_TRY(cudaFree(u_input));
+  BENCH_CUDA_TRY(cudaFree(u_output));
+}
+
+static void BM_RadixSort(bm::State &st) {
+  const auto num_items = st.range(0);
+  const auto u_mortons = AllocateManaged<Code_t>(num_items);
+  const auto u_mortons_alt = AllocateManaged<Code_t>(num_items);
+
+  // One time code to get the required temp storage size
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, u_mortons,
+                                 u_mortons_alt, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+  for (auto _ : st) {
+    cuda_event_timer raii{st, true};
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
+                                   u_mortons, u_mortons_alt, num_items);
+  }
+
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
+  BENCH_CUDA_TRY(cudaFree(u_mortons));
+  BENCH_CUDA_TRY(cudaFree(u_mortons_alt));
+}
+
+static void BM_RemoveDuplicates(bm::State &st) {
+  const auto num_items = st.range(0);
+  const auto u_mortons = AllocateManaged<Code_t>(num_items);
+  const auto u_mortons_alt = AllocateManaged<Code_t>(num_items);
+  const auto u_num_selected_out = AllocateManaged<int>(1);
+
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
+                            u_mortons_alt, u_num_selected_out, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+  for (auto _ : st) {
+    cuda_event_timer raii{st, true};
+    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
+                              u_mortons_alt, u_num_selected_out, num_items);
+  }
+
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
+  BENCH_CUDA_TRY(cudaFree(u_mortons));
+  BENCH_CUDA_TRY(cudaFree(u_mortons_alt));
+  BENCH_CUDA_TRY(cudaFree(u_num_selected_out));
+}
 
 class SortedMortonFixture : public bm::Fixture {
 public:
@@ -193,6 +221,27 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_EdgeCount)(bm::State &st) {
   BENCH_CUDA_TRY(cudaFree(u_edge_count));
 }
 
+static void BM_PrefixSum(bm::State &st) {
+  const auto num_items = st.range(0);
+  const auto u_nums = AllocateManaged<int>(num_items);
+  const auto u_sums = AllocateManaged<int>(num_items);
+
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
+                                u_sums, num_items);
+  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+  for (auto _ : st) {
+    cuda_event_timer raii{st, true};
+    cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
+                                  u_sums, num_items);
+  }
+  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
+  BENCH_CUDA_TRY(cudaFree(u_nums));
+  BENCH_CUDA_TRY(cudaFree(u_sums));
+}
+
 BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
   const auto num_threads = st.range(0);
 
@@ -204,7 +253,6 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
 
   constexpr auto num_threads_for_data_prep = 256;
 
-  // EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
   const auto num_blocks = (num_brt_nodes + num_threads_for_data_prep - 1) /
                           num_threads_for_data_prep;
   CalculateEdgeCountKernel<<<num_blocks, num_threads_for_data_prep>>>(
@@ -213,7 +261,6 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
 
   u_edge_count[0] = 1; // Root node counts as 1
 
-  // CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
   void *d_temp_storage = nullptr;
   size_t temp_storage_bytes = 0;
   cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
@@ -254,91 +301,6 @@ BENCHMARK_DEFINE_F(RadixTreeFixture, BM_MakeOctreeNodes)(bm::State &st) {
   BENCH_CUDA_TRY(cudaFree(u_edge_count));
   BENCH_CUDA_TRY(cudaFree(u_oc_offset));
   BENCH_CUDA_TRY(cudaFree(u_oc_nodes));
-}
-
-static void BM_ComputeMorton(bm::State &st) {
-  constexpr auto num_items = 10'000'000;
-  const auto num_threads = st.range(0);
-  const auto u_input = AllocateManaged<float3>(num_items);
-  const auto u_output = AllocateManaged<Code_t>(num_items);
-
-  for (auto _ : st) {
-    cuda_event_timer raii{st, true};
-    const auto num_blocks = (num_items + num_threads - 1) / num_threads;
-    convertMortonOnly_v2<<<num_blocks, num_threads>>>(num_items, u_input,
-                                                      u_output, morton_encoder);
-  }
-
-  BENCH_CUDA_TRY(cudaFree(u_input));
-  BENCH_CUDA_TRY(cudaFree(u_output));
-}
-
-static void BM_RadixSort(bm::State &st) {
-  const auto num_items = st.range(0);
-  const auto u_mortons = AllocateManaged<Code_t>(num_items);
-  const auto u_mortons_alt = AllocateManaged<Code_t>(num_items);
-
-  // One time code to get the required temp storage size
-  void *d_temp_storage = nullptr;
-  size_t temp_storage_bytes = 0;
-  cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, u_mortons,
-                                 u_mortons_alt, num_items);
-  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-
-  for (auto _ : st) {
-    cuda_event_timer raii{st, true};
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
-                                   u_mortons, u_mortons_alt, num_items);
-  }
-
-  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
-  BENCH_CUDA_TRY(cudaFree(u_mortons));
-  BENCH_CUDA_TRY(cudaFree(u_mortons_alt));
-}
-
-static void BM_RemoveDuplicates(bm::State &st) {
-  const auto num_items = st.range(0);
-  const auto u_mortons = AllocateManaged<Code_t>(num_items);
-  const auto u_mortons_alt = AllocateManaged<Code_t>(num_items);
-  const auto u_num_selected_out = AllocateManaged<int>(1);
-
-  void *d_temp_storage = nullptr;
-  size_t temp_storage_bytes = 0;
-  cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
-                            u_mortons_alt, u_num_selected_out, num_items);
-  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-
-  for (auto _ : st) {
-    cuda_event_timer raii{st, true};
-    cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, u_mortons,
-                              u_mortons_alt, u_num_selected_out, num_items);
-  }
-
-  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
-  BENCH_CUDA_TRY(cudaFree(u_mortons));
-  BENCH_CUDA_TRY(cudaFree(u_mortons_alt));
-  BENCH_CUDA_TRY(cudaFree(u_num_selected_out));
-}
-
-static void BM_PrefixSum(bm::State &st) {
-  const auto num_items = st.range(0);
-  const auto u_nums = AllocateManaged<int>(num_items);
-  const auto u_sums = AllocateManaged<int>(num_items);
-
-  void *d_temp_storage = nullptr;
-  size_t temp_storage_bytes = 0;
-  cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
-                                u_sums, num_items);
-  BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-
-  for (auto _ : st) {
-    cuda_event_timer raii{st, true};
-    cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, u_nums,
-                                  u_sums, num_items);
-  }
-  BENCH_CUDA_TRY(cudaFree(d_temp_storage));
-  BENCH_CUDA_TRY(cudaFree(u_nums));
-  BENCH_CUDA_TRY(cudaFree(u_sums));
 }
 
 BENCHMARK(BM_ComputeMorton)

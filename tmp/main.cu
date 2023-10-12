@@ -4,7 +4,6 @@
 #include <random>
 
 #include "brt.cuh"
-#include "cpu_timer.hpp"
 #include "cuda_utils.cuh"
 #include "morton.cuh"
 #include "oct.cuh"
@@ -24,6 +23,7 @@
     kernel(d_temp_storage, temp_storage_bytes, args...);                       \
     cudaMalloc(&d_temp_storage, temp_storage_bytes);                           \
     kernel(d_temp_storage, temp_storage_bytes, args...);                       \
+    cudaFree(d_temp_storage);                                                  \
     HANDLE_ERROR(cudaDeviceSynchronize());                                     \
   }
 
@@ -50,11 +50,6 @@ int main() {
   const auto u_mortons = AllocateManaged<Code_t>(num_elements);
   const auto u_mortons_alt = AllocateManaged<Code_t>(num_elements);
   const auto u_num_selected_out = AllocateManaged<int>(1);
-  const auto u_inner_nodes = AllocateManaged<brt::InnerNodes>(num_elements);
-  const auto u_edge_count = AllocateManaged<int>(num_elements);
-  const auto u_oc_offset = AllocateManaged<int>(num_elements);
-  const auto u_oc_nodes =
-      AllocateManaged<oct::OctNode>(num_elements); // could be less
 
   // init random inputs
   constexpr auto min_coord = 0.0f;
@@ -69,50 +64,39 @@ int main() {
 
   GpuWarmUp();
 
-  TimeTask("Morton encoding", [&] {
-    TransformMortonSync(num_elements, u_input, u_mortons, morton_encoder);
-  });
-
-  TimeTask("CUB radix sort",
-           [&] { CubRadixSort(u_mortons, u_mortons_alt, num_elements); });
-
-  TimeTask("CUB unique", [&] {
-    CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_elements);
-  });
+  TransformMortonSync(num_elements, u_input, u_mortons, morton_encoder);
+  CubRadixSort(u_mortons, u_mortons_alt, num_elements);
+  CubUnique(u_mortons_alt, u_mortons, u_num_selected_out, num_elements);
 
   const auto num_unique = *u_num_selected_out;
   const auto num_brt_nodes = num_unique - 1;
 
-  TimeTask("Build radix tree", [&] {
-    BuildRadixTreeSync(num_brt_nodes, u_mortons_alt, u_inner_nodes);
-  });
+  const auto u_inner_nodes = AllocateManaged<brt::InnerNodes>(num_brt_nodes);
+  const auto u_edge_count = AllocateManaged<int>(num_brt_nodes);
+  const auto u_oc_offset = AllocateManaged<int>(num_brt_nodes + 1);
 
-  TimeTask("Calculate edge count", [&] {
-    EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
-    u_edge_count[0] = 1; // Root node counts as 1
-  });
-
-  TimeTask("Prefix sum", [&] {
-    CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
-    u_oc_offset[0] = 0;
-  });
+  BuildRadixTreeSync(num_brt_nodes, u_mortons_alt, u_inner_nodes);
+  EdgeCountSync(num_brt_nodes, u_edge_count, u_inner_nodes);
+  u_edge_count[0] = 1; // Root node counts as 1
+  CubPrefixSum(u_edge_count, u_oc_offset + 1, num_brt_nodes);
+  u_oc_offset[0] = 0;
 
   const auto num_oc_nodes = u_oc_offset[num_brt_nodes];
+
+  const auto u_oc_nodes =
+      AllocateManaged<oct::OctNode>(num_oc_nodes); // could be less
+
   const auto root_level = u_inner_nodes[0].delta_node / 3;
   Code_t root_prefix = u_mortons[0] >> (kCodeLen - (root_level * 3));
 
-  TimeTask("Make octree nodes", [&] {
-    u_oc_nodes[0].cornor =
-        morton_decoder(root_prefix << (kCodeLen - (root_level * 3)));
-    u_oc_nodes[0].cell_size = range;
-    MakeOctreeNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
-                        u_mortons, u_inner_nodes, morton_decoder, root_level);
-  });
+  u_oc_nodes[0].cornor =
+      morton_decoder(root_prefix << (kCodeLen - (root_level * 3)));
+  u_oc_nodes[0].cell_size = range;
+  MakeOctreeNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
+                      u_mortons, u_inner_nodes, morton_decoder, root_level);
 
-  TimeTask("Link nodes", [&] {
-    LinkNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count,
-                  u_mortons, u_inner_nodes);
-  });
+  LinkNodesSync(num_brt_nodes, u_oc_nodes, u_oc_offset, u_edge_count, u_mortons,
+                u_inner_nodes);
 
   // Print out some stats
 
