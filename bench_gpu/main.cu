@@ -88,15 +88,19 @@
 
 //     void *d_temp_storage = nullptr;
 //     size_t temp_storage_bytes = 0;
-//     BENCH_CUDA_TRY(cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes,
+//     BENCH_CUDA_TRY(cub::DeviceSelect::Unique(d_temp_storage,
+//     temp_storage_bytes,
 //                                              u_input, u_output,
-//                                              u_num_selected_out, num_elements));
+//                                              u_num_selected_out,
+//                                              num_elements));
 
 //     BENCH_CUDA_TRY(cudaMalloc(&d_temp_storage, temp_storage_bytes));
 
-//     BENCH_CUDA_TRY(cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes,
+//     BENCH_CUDA_TRY(cub::DeviceSelect::Unique(d_temp_storage,
+//     temp_storage_bytes,
 //                                              u_input, u_output,
-//                                              u_num_selected_out, num_elements));
+//                                              u_num_selected_out,
+//                                              num_elements));
 //     bm::DoNotOptimize(u_output);
 //   }
 
@@ -119,9 +123,9 @@
 //     cudaMallocManaged(&u_input, num_elements * sizeof(float3));
 //     cudaMallocManaged(&u_mortons, num_elements * sizeof(Code_t));
 //     cudaMallocManaged(&u_edge_count, num_elements * sizeof(int));
-//     cudaMallocManaged(&u_inner_nondes, num_elements * sizeof(brt::InnerNodes));
-//     cudaMallocManaged(&u_oc_offset, num_elements * sizeof(int));
-//     BENCH_CUDA_TRY(cudaDeviceSynchronize());
+//     cudaMallocManaged(&u_inner_nondes, num_elements *
+//     sizeof(brt::InnerNodes)); cudaMallocManaged(&u_oc_offset, num_elements *
+//     sizeof(int)); BENCH_CUDA_TRY(cudaDeviceSynchronize());
 
 //     std::vector<int> indices(num_elements);
 //     std::iota(indices.begin(), indices.end(), 0);
@@ -144,7 +148,8 @@
 //     std::sort(std::execution::par, u_mortons, u_mortons + num_elements);
 
 //     const auto last_unique_it =
-//         std::unique(std::execution::par, u_mortons, u_mortons + num_elements);
+//         std::unique(std::execution::par, u_mortons, u_mortons +
+//         num_elements);
 
 //     num_unique_keys = std::distance(u_mortons, last_unique_it);
 
@@ -188,7 +193,8 @@
 //     cuda_event_timer raii{st};
 
 //     const auto num_blocks = (num_elements + num_threads - 1) / num_threads;
-//     BuildRadixTreeKernel<<<num_blocks, num_threads>>>(u_mortons, inner_nondes,
+//     BuildRadixTreeKernel<<<num_blocks, num_threads>>>(u_mortons,
+//     inner_nondes,
 //                                                       num_unique_keys);
 //     bm::DoNotOptimize(inner_nondes);
 //   }
@@ -268,6 +274,4 @@
 
 // BENCHMARK_MAIN();
 
-int main(){
-  return 0;
-}
+int main() { return 0; }

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <execution>
-#include <pstl/glue_execution_defs.h>
 #include <random>
 #include <vector>
 
@@ -127,7 +126,7 @@ static void BM_BuildRadixTree(bm::State &state) {
   }
 }
 
-// BENCHMARK(BM_point3f_to_morton64)->ThreadRange(1, 8);
+BENCHMARK(BM_point3f_to_morton64)->ThreadRange(1, 8);
 // BENCHMARK(BM_point3f_to_morton64_v2)
 //     ->Arg(10'000'000)
 //     ->ThreadRange(1, 8)
