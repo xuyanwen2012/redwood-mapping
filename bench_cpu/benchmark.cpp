@@ -99,7 +99,7 @@ static void BM_BuildRadixTree(bm::State &state) {
 
   thread_local std::mt19937 gen(114514); // NOLINT(cert-msc51-cpp)
   std::uniform_real_distribution dis(min_coord, range);
-  std::generate_n(inputs, num_items,
+  std::generate_n(inputs.data(), num_items,
                   [&] { return make_float3(dis(gen), dis(gen), dis(gen)); });
 
   std::transform(inputs.begin(), inputs.end(), sorted_morton_keys.begin(),
